@@ -482,3 +482,12 @@ func TestPromptFields(t *testing.T) {
 		t.Fatal("empty field list")
 	}
 }
+
+func TestReplyTextExpandsCmdPrefix(t *testing.T) {
+	bot := &fakeBot{}
+	log := zerolog.Nop()
+	replyText(newEvent(bot, nil, &log, "$x"), "Run `$cmdprefix widget` now")
+	if r := bot.lastReply(); !strings.Contains(r, "`!jc widget`") || strings.Contains(r, "$cmdprefix") {
+		t.Errorf("reply: %q", r)
+	}
+}

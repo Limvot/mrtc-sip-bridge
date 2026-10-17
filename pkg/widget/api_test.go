@@ -1,12 +1,17 @@
 package widget
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"testing"
 	"time"
 
+	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/id"
+
 	"github.com/williamkray/mrtc-sip-bridge/pkg/calls"
+	"github.com/williamkray/mrtc-sip-bridge/pkg/hostkit"
 	"github.com/williamkray/mrtc-sip-bridge/pkg/media"
 )
 
@@ -261,5 +266,24 @@ func TestLimiterEviction(t *testing.T) {
 	f.evict()
 	if f.size() != 0 {
 		t.Error("expired lockout bucket kept")
+	}
+}
+
+func TestRefusalExpandsCmdPrefix(t *testing.T) {
+	var e *env
+	e = newEnv(t, func(_ *hostkit.WidgetConfig, d *Deps) {
+		d.CommandPrefix = "!sip"
+		d.ResolveRoom = func(ctx context.Context, u *bridgev2.User, r id.RoomID) (RoomContext, error) {
+			rc, err := e.resolve(ctx, u, r)
+			if rc.Refusal != "" {
+				rc.Refusal = "Use `$cmdprefix login` first."
+			}
+			return rc, err
+		}
+	})
+	tb := e.session(tokBob, roomBobMgmt)
+	m := decode(t, e.do(http.MethodGet, api+"state", tb, nil))
+	if got := m["login"].(map[string]any)["message"]; got != "Use `!sip login` first." {
+		t.Errorf("state refusal = %v", got)
 	}
 }

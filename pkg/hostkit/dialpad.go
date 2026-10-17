@@ -120,7 +120,7 @@ func dialpadHandlers(h *callCommands) []*commands.FullHandler {
 // dialpadGate runs the checks common to the three commands; false means a reply was sent.
 func (h *callCommands) dialpadGate(ce *commands.Event, cmd string) bool {
 	if h.d.Dialpad == nil {
-		ce.Reply("%s", msgPWADisabled)
+		replyText(ce, msgPWADisabled)
 		return false
 	}
 	if ce.Portal != nil || ce.User == nil || ce.RoomID == "" || ce.RoomID != ce.User.ManagementRoom {
@@ -128,7 +128,7 @@ func (h *callCommands) dialpadGate(ce *commands.Event, cmd string) bool {
 		return false
 	}
 	if ul, refusal := h.d.Login(ce); ul == nil {
-		ce.Reply("%s", refusal)
+		replyText(ce, refusal)
 		return false
 	}
 	return true
@@ -156,7 +156,7 @@ func (h *callCommands) cmdDialpadLink(ce *commands.Event) {
 	}
 	ul, _ := h.d.Login(ce)
 	if !h.limiter.allow(ce.User.MXID) {
-		ce.Reply("%s", msgLinkRate)
+		replyText(ce, msgLinkRate)
 		return
 	}
 	name := linkName(ce.Args)
@@ -164,13 +164,13 @@ func (h *callCommands) cmdDialpadLink(ce *commands.Event) {
 	switch {
 	case err == nil:
 	case errors.Is(err, ErrDialpadRoomNotPrivate):
-		ce.Reply("%s", MsgWidgetNotPrivate)
+		replyText(ce, MsgWidgetNotPrivate)
 		return
 	case errors.Is(err, ErrDialpadLinkLimit):
-		ce.Reply("%s", msgLinkLimit)
+		replyText(ce, msgLinkLimit)
 		return
 	default:
-		ce.Reply("%s", msgLinkFailed)
+		replyText(ce, msgLinkFailed)
 		return
 	}
 	prefix := ""
@@ -188,7 +188,7 @@ func (h *callCommands) cmdDialpadLink(ce *commands.Event) {
 	if err != nil || resp == nil {
 		// The code never reached the user: drop it.
 		_, _ = h.d.Dialpad.Revoke(ce.Ctx, ce.User.MXID, iss.ID)
-		ce.Reply("%s", msgLinkFailed)
+		replyText(ce, msgLinkFailed)
 		return
 	}
 	if err := h.d.Dialpad.AttachNotice(ce.Ctx, iss.ID, ce.RoomID, resp.EventID); err != nil && ce.Log != nil {
@@ -221,7 +221,7 @@ func (h *callCommands) cmdDialpadLinks(ce *commands.Event) {
 	}
 	links, err := h.d.Dialpad.List(ce.Ctx, ce.User.MXID)
 	if err != nil {
-		ce.Reply("%s", "Could not list Dialpad links.")
+		replyText(ce, "Could not list Dialpad links.")
 		return
 	}
 	if len(links) == 0 {
@@ -239,7 +239,7 @@ func (h *callCommands) cmdDialpadLinks(ce *commands.Event) {
 		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | %s | %s | %s |\n", l.ID, cell(l.Name), cell(state), cell(l.Client),
 			day(l.Created), day(l.LastUsed), day(l.Expires))
 	}
-	ce.Reply("%s", b.String())
+	replyText(ce, b.String())
 }
 
 // cell makes s safe for a markdown table cell.
@@ -269,7 +269,7 @@ func (h *callCommands) cmdDialpadRevoke(ce *commands.Event) {
 	n, err := h.d.Dialpad.Revoke(ce.Ctx, ce.User.MXID, linkID)
 	switch {
 	case err != nil:
-		ce.Reply("%s", "Could not revoke.")
+		replyText(ce, "Could not revoke.")
 	case n == 0 && linkID == "all":
 		ce.Reply("No Dialpad links to revoke.")
 	case n == 0:

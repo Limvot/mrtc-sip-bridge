@@ -259,7 +259,7 @@ func (s *Server) resolve(ctx context.Context, user *bridgev2.User, room id.RoomI
 	if err != nil {
 		var ref *RefusalError
 		if errors.As(err, &ref) {
-			return rc, &apiError{Status: http.StatusForbidden, Code: codeForbidden, Message: ref.Message}
+			return rc, &apiError{Status: http.StatusForbidden, Code: codeForbidden, Message: s.expand(ref.Message)}
 		}
 		s.logFor(ctx).Warn().Str("error", obs.Scrub(err.Error())).Msg("Widget room resolution failed")
 		return rc, errInternal
@@ -319,7 +319,7 @@ func (s *Server) resolveDevice(ctx context.Context, user *bridgev2.User, login n
 			s.sessions.revokeDevice(devID)
 			return rc, errDeviceRevoked("")
 		case errors.As(err, &ref):
-			return rc, &apiError{Status: http.StatusForbidden, Code: codeForbidden, Message: ref.Message}
+			return rc, &apiError{Status: http.StatusForbidden, Code: codeForbidden, Message: s.expand(ref.Message)}
 		}
 		s.logFor(ctx).Warn().Str("error", obs.Scrub(err.Error())).Msg("Dialpad device resolution failed")
 		return rc, errInternal
@@ -333,7 +333,7 @@ func (s *Server) resolveDevice(ctx context.Context, user *bridgev2.User, login n
 // ready returns the call API and login of a, or the not_ready / login_required error.
 func (s *Server) ready(a *authed) (hostkit.CallAPI, core.LoginRef, *apiError) {
 	if a.rc.Login == nil {
-		msg := a.rc.Refusal
+		msg := s.expand(a.rc.Refusal)
 		if msg == "" {
 			msg = "You are not logged in."
 		}
@@ -702,4 +702,9 @@ func titleFor(rc RoomContext) string {
 		return "Call " + rc.Number
 	}
 	return ""
+}
+
+// expand replaces $cmdprefix in host-supplied user-facing text (refusals) with the command prefix.
+func (s *Server) expand(msg string) string {
+	return strings.ReplaceAll(msg, "$cmdprefix", s.d.CommandPrefix)
 }

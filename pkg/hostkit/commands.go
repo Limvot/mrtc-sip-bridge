@@ -133,12 +133,12 @@ func (h *callCommands) calls() CallAPI {
 func (h *callCommands) cmdCall(ce *commands.Event) {
 	ul, refusal := h.d.Login(ce)
 	if ul == nil {
-		ce.Reply("%s", refusal)
+		replyText(ce, refusal)
 		return
 	}
 	api := h.calls()
 	if api == nil {
-		ce.Reply("%s", msgNotReady)
+		replyText(ce, msgNotReady)
 		return
 	}
 	h.enqueueWidget(ce)
@@ -154,7 +154,7 @@ func (h *callCommands) cmdCall(ce *commands.Event) {
 		ce.Reply("Usage: `$cmdprefix call <number>` (or send `$cmdprefix call` inside a number's room)")
 		return
 	}
-	ce.Reply("%s", callReply(ce.Ctx, api, core.LoginRef(ul.ID), req, roomNumber))
+	replyText(ce, callReply(ce.Ctx, api, core.LoginRef(ul.ID), req, roomNumber))
 }
 
 // roomNumber returns the E.164 of p if it is a 1:1 number portal, else "".
@@ -171,16 +171,16 @@ func (h *callCommands) roomNumber(p *bridgev2.Portal) string {
 func (h *callCommands) cmdHangup(ce *commands.Event) {
 	ul, refusal := h.d.Login(ce)
 	if ul == nil {
-		ce.Reply("%s", refusal)
+		replyText(ce, refusal)
 		return
 	}
 	api := h.calls()
 	if api == nil {
-		ce.Reply("%s", msgNotReady)
+		replyText(ce, msgNotReady)
 		return
 	}
 	h.enqueueWidget(ce)
-	ce.Reply("%s", hangupReply(ce.Ctx, api, core.LoginRef(ul.ID), commandRoom(ce)))
+	replyText(ce, hangupReply(ce.Ctx, api, core.LoginRef(ul.ID), commandRoom(ce)))
 }
 
 func (h *callCommands) cmdDTMF(ce *commands.Event) {
@@ -190,17 +190,17 @@ func (h *callCommands) cmdDTMF(ce *commands.Event) {
 	}
 	ul, refusal := h.d.Login(ce)
 	if ul == nil {
-		ce.Reply("%s", refusal)
+		replyText(ce, refusal)
 		return
 	}
 	api := h.calls()
 	if api == nil {
-		ce.Reply("%s", msgNotReady)
+		replyText(ce, msgNotReady)
 		return
 	}
 	h.enqueueWidget(ce)
 	// Join the args so "1 2 3" and "123" both work (RawArgs breaks on capitalized command names).
-	ce.Reply("%s", dtmfReply(ce.Ctx, api, core.LoginRef(ul.ID), commandRoom(ce), strings.Join(ce.Args, "")))
+	replyText(ce, dtmfReply(ce.Ctx, api, core.LoginRef(ul.ID), commandRoom(ce), strings.Join(ce.Args, "")))
 }
 
 const (
@@ -236,29 +236,29 @@ func (h *callCommands) enqueueWidget(ce *commands.Event) {
 
 func (h *callCommands) cmdWidget(ce *commands.Event) {
 	if ul, refusal := h.d.Login(ce); ul == nil {
-		ce.Reply("%s", refusal)
+		replyText(ce, refusal)
 		return
 	}
 	if h.d.Widget == nil {
-		ce.Reply("%s", msgWidgetDisabled)
+		replyText(ce, msgWidgetDisabled)
 		return
 	}
 	room, title, ok := h.widgetTarget(ce)
 	if !ok {
-		ce.Reply("%s", "The Dialpad widget is only available in a number's room or the management room.")
+		replyText(ce, "The Dialpad widget is only available in a number's room or the management room.")
 		return
 	}
 	ctx, cancel := context.WithTimeout(ce.Ctx, 5*time.Second)
 	defer cancel()
 	switch err := h.d.Widget.Ensure(ctx, room, title); {
 	case err == nil:
-		ce.Reply("%s", msgWidgetOK)
+		replyText(ce, msgWidgetOK)
 	case errors.Is(err, ErrWidgetRoomNotPrivate):
-		ce.Reply("%s", MsgWidgetNotPrivate)
+		replyText(ce, MsgWidgetNotPrivate)
 	case errors.Is(err, mautrix.MForbidden):
-		ce.Reply("%s", msgWidgetForbid)
+		replyText(ce, msgWidgetForbid)
 	default:
-		ce.Reply("%s", msgWidgetFailed)
+		replyText(ce, msgWidgetFailed)
 	}
 }
 
@@ -314,4 +314,18 @@ func hangupReply(ctx context.Context, api CallAPI, login core.LoginRef, room id.
 // dtmfReply runs DTMFAction and returns its reply (never containing the digits).
 func dtmfReply(ctx context.Context, api CallAPI, login core.LoginRef, room id.RoomID, digits string) string {
 	return DTMFAction(ctx, api, login, room, digits).Message
+}
+
+// expandPrefix replaces $cmdprefix in s with the bridge's command prefix. commands.Event.Reply only
+// expands its format string, so text passed through its "%s" argument needs this.
+func expandPrefix(ce *commands.Event, s string) string {
+	if ce == nil || ce.Bridge == nil || ce.Bridge.Config == nil {
+		return s
+	}
+	return strings.ReplaceAll(s, "$cmdprefix", ce.Bridge.Config.CommandPrefix)
+}
+
+// replyText replies with s verbatim except for $cmdprefix expansion.
+func replyText(ce *commands.Event, s string) {
+	ce.Reply("%s", expandPrefix(ce, s))
 }

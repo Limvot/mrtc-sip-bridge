@@ -105,7 +105,7 @@ func (ps *promptState) promptNext(ce *commands.Event) {
 		parts = append(parts, "Enter `skip` to skip this field")
 	}
 	// Like bridgev2's prompt, $cmdprefix in field texts is expanded (Reply only expands its format).
-	ce.Reply("%s", strings.ReplaceAll(strings.Join(parts, "\n"), "$cmdprefix", ce.Bridge.Config.CommandPrefix))
+	replyText(ce, strings.Join(parts, "\n"))
 	commands.StoreCommandState(ce.User, &commands.CommandState{
 		Next:   commands.MinimalCommandHandlerFunc(ps.submitNext),
 		Action: ps.action,
