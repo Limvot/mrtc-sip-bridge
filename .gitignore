@@ -1,0 +1,18 @@
+# Spike outputs and secrets
+spikes/*/out/
+spikes/*/.env
+spikes/s2-sip/s2-sip
+*.wav
+*.env
+spikes/s1-rtc/s1-rtc
+spikes/*/out-*.log
+spikes/s1-rtc/out/
+
+# Bridge build output and local runtime files
+/mrtc-sip-bridge
+config.yaml
+registration.yaml
+*.db
+*.db-shm
+*.db-wal
+deploy-dev/

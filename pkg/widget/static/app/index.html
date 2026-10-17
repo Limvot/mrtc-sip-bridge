@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#1f6f43">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Dialpad">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Dialpad</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<main id="app">
+
+  <!-- Not set up (or signed out): paste a link. -->
+  <section id="screen-setup" hidden>
+    <h1>Set up this app</h1>
+    <p id="setup-note" class="note" role="status" aria-live="polite" hidden></p>
+    <p>Send <code>dialpad-link</code> to your bridge bot in your management room (your direct chat with the bot) to get a link. Then tap <strong>Paste link</strong> below and paste the message, or open the link on this phone.</p>
+    <label for="paste">Paste link</label>
+    <textarea id="paste" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste the message or link here"></textarea>
+    <button id="paste-go" class="btn primary" type="button">Use this link</button>
+    <p class="hint">On iPhone, add this app to the Home Screen first, open it from there, then paste. A link used in Safari does not carry over to the Home Screen app.</p>
+  </section>
+
+  <!-- Confirm enrolment. -->
+  <section id="screen-confirm" hidden>
+    <h1>Set up this device?</h1>
+    <p id="confirm-text"></p>
+    <p id="confirm-replace" class="note" hidden></p>
+    <p id="confirm-err" class="status err" role="alert" hidden></p>
+    <button id="confirm-go" class="btn primary" type="button">Set up</button>
+    <button id="confirm-cancel" class="btn" type="button">Cancel</button>
+  </section>
+
+  <!-- Dialpad. -->
+  <section id="screen-main" hidden>
+    <button id="who" class="who" type="button" aria-expanded="false" aria-controls="sheet"></button>
+
+    <div id="sheet" class="sheet" hidden>
+      <p id="sheet-info" class="note"></p>
+      <p id="sheet-install-hint" class="hint" hidden></p>
+      <button id="install" class="btn" type="button" hidden>Install app</button>
+      <label class="check"><input id="recent-toggle" type="checkbox" checked> <span>Remember recent numbers</span></label>
+      <p class="hint">Recent numbers stay on this phone. Anyone who can unlock it can see them.</p>
+      <button id="recent-clear" class="btn" type="button">Clear recent numbers</button>
+      <button id="forget" class="btn danger" type="button">Forget this device</button>
+      <div id="forget-confirm" hidden>
+        <p>This signs this phone out of the bridge. To use it again you need a new link.</p>
+        <label class="check"><input id="forget-clear" type="checkbox"> <span>Also clear recent numbers</span></label>
+        <p id="forget-err" class="status err" role="alert" hidden></p>
+        <button id="forget-go" class="btn danger" type="button">Forget</button>
+        <button id="forget-cancel" class="btn" type="button">Cancel</button>
+      </div>
+    </div>
+
+    <p id="status" class="status" role="status" aria-live="polite">Connecting...</p>
+    <p id="warn" class="status err" role="alert" hidden></p>
+
+    <section id="dialbox">
+      <label for="number">Number</label>
+      <div class="numrow">
+        <input id="number" type="tel" inputmode="tel" autocomplete="off" maxlength="40" spellcheck="false" placeholder="+1 555 123 4567">
+        <button id="backspace" class="btn" type="button" aria-label="Delete last character">&#9003;</button>
+      </div>
+      <p id="preview" class="preview" aria-live="polite"></p>
+      <button id="call-number" class="btn primary" type="button" disabled>Call</button>
+      <p id="explainer" class="hint">Calls ring in your Matrix app (Element X, Sable). Answer there; this app only dials and controls the call.</p>
+    </section>
+
+    <p id="keys-shown" class="keys-shown" aria-live="off" hidden></p>
+    <section id="keypad-wrap">
+      <div id="keypad" class="keypad" role="group" aria-label="Keypad"></div>
+      <button id="abcd-toggle" class="btn link" type="button" aria-expanded="false" aria-controls="keypad-extra">Show A-D</button>
+      <div id="keypad-extra" class="keypad extra" role="group" aria-label="Extra keys A to D" hidden></div>
+    </section>
+
+    <a id="open-room" class="btn secondary" href="#" target="_blank" rel="noopener noreferrer" hidden>Open in Matrix</a>
+    <button id="hangup" class="btn danger" type="button" hidden>Hang up</button>
+
+    <section id="recent-wrap" hidden>
+      <h2>Recent</h2>
+      <ul id="recent" class="recent"></ul>
+    </section>
+  </section>
+
+</main>
+<script src="app.js"></script>
+</body>
+</html>

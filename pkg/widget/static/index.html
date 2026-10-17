@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>Dialpad</title>
+<link rel="stylesheet" href="static/app.css">
+</head>
+<body>
+<main id="app">
+  <p id="status" class="status" role="status" aria-live="polite">Connecting...</p>
+  <p id="roomline" class="roomline" hidden></p>
+
+  <section id="callbox" hidden>
+    <button id="call-room" class="btn primary" type="button" hidden>Call</button>
+    <button id="other-toggle" class="btn link" type="button" hidden aria-expanded="false" aria-controls="dialbox">Dial another number</button>
+  </section>
+
+  <section id="dialbox" hidden>
+    <label for="number">Number</label>
+    <input id="number" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" spellcheck="false" placeholder="+1 555 123 4567">
+    <p id="preview" class="preview" aria-live="polite"></p>
+    <button id="call-number" class="btn primary" type="button" disabled>Call</button>
+  </section>
+
+  <p id="keys-shown" class="keys-shown" aria-live="off" hidden></p>
+  <section id="keypad-wrap" hidden>
+    <div id="keypad" class="keypad" role="group" aria-label="Keypad"></div>
+    <button id="abcd-toggle" class="btn link" type="button" aria-expanded="false" aria-controls="keypad-extra">Show A-D</button>
+    <div id="keypad-extra" class="keypad extra" role="group" aria-label="Extra keys A to D" hidden></div>
+  </section>
+
+  <a id="open-room" class="btn secondary" href="#" target="_blank" rel="noopener noreferrer" hidden>Open room</a>
+  <button id="hangup" class="btn danger" type="button" hidden>Hang up</button>
+</main>
+<script src="static/app.js"></script>
+</body>
+</html>

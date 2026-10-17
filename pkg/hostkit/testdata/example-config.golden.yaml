@@ -1,0 +1,85 @@
+# Local IPv4 to bind SIP sockets on. Empty or 0.0.0.0 = auto-detect the first non-loopback IPv4.
+# (diago needs a concrete IP so REGISTER and incoming INVITEs share one socket.)
+sip_bind_ip: ""
+# SIP ports, one per active login (UDP and TCP). Publish/forward this range if behind NAT.
+sip_port_min: 5060
+sip_port_max: 5069
+# Public IPv4 put in the SIP Contact and SDP. Empty = discover with STUN (below), else the bind IP.
+external_ip: ""
+# STUN server (host:port) used when external_ip is empty. Empty disables STUN.
+stun_server: stun.l.google.com:19302
+# RTP (call audio) UDP port range. Must be reachable from your SIP provider.
+rtp_port_min: 40000
+rtp_port_max: 40100
+# REGISTER Expires to request, and how often to re-register. Re-registering often keeps NAT
+# bindings open; refresh must be shorter than expiry.
+register_expiry_seconds: 60
+register_refresh_seconds: 25
+# How long an incoming call rings in Matrix before it is treated as missed (5-300). Element Web stops
+# ringing after 120 s regardless.
+ring_timeout_seconds: 30
+# Hang up an answered call when no audio (RTP) arrives from the SIP provider for this long.
+rtp_timeout_seconds: 60
+# lk-jwt-service (MatrixRTC auth service) URL, e.g. https://matrix-rtc.example.org/livekit/jwt.
+# Empty = discover from https://<homeserver.domain>/.well-known/matrix/client (org.matrix.msc4143.rtc_foci).
+livekit_service_url: ""
+# Country calling code assumed for numbers without a leading + (1 = North America).
+default_country_code: "1"
+# How the bridge recognises that you started a call in a number's room:
+#   ring        your client's call notification plus your fresh call membership (Element X, Element Call)
+#   membership  your fresh call membership alone (for clients that send no notification; may misfire if
+#               a second device of yours joins an empty call)
+#   off         only the "call" command places calls
+outbound_trigger: ring
+# Cancel an outgoing call that is not answered within this many seconds (10-300).
+dial_timeout_seconds: 60
+# Only numbers starting with one of these E.164 prefixes can be called. Empty list = any number.
+# Emergency and short codes can never be called.
+dial_allowed_prefixes: ["+1"]
+# Request-URI user format for dialled numbers: digits (15551234567, JMP/Bandwidth) or e164 (+15551234567).
+dial_number_format: digits
+# Allow calling the account's own number (testing only: the call loops back through the provider).
+allow_self_dial: false
+# Redact "dtmf" command messages after sending the tones (they may contain PINs).
+dtmf_redact_command: true
+widget:
+    # Add a Dialpad widget to number rooms and the management room (Sable, gomuks; not Element X).
+    enabled: false
+    # Public HTTPS URL of the widget, ending in "/". Its path is served on the appservice listener,
+    # so forward it there from your reverse proxy (only this path, never /_matrix/app).
+    public_url: ""
+    # Secret for the per-room widget keys. "generate" is replaced with a random value on start.
+    # Changing it changes every widget URL (the next sweep updates the rooms).
+    # A generated secret is written back to this file, so the file must be writable; otherwise set
+    # the secret explicitly (a new one on every start would change every widget URL).
+    secret: generate
+    # Origins allowed to frame the widget (CSP frame-ancestors). "*" allows any client.
+    frame_ancestors: ["*"]
+    # Users of other homeservers may use the widget (their OpenID token is checked over federation).
+    allow_remote_users: false
+    # When enabled is false: remove existing Dialpad widgets from rooms on the next start.
+    remove_when_disabled: false
+    # Reverse proxies (CIDRs or IPs) whose last X-Forwarded-For hop is used as the client address for
+    # rate limits. Empty: only private and loopback peers are believed.
+    trusted_proxies: []
+    # Installable phone app (PWA) at <public_url>app/, signed in with links from `dialpad-link`.
+    # Needs enabled: true. A dedicated hostname for public_url is recommended (the app keeps a
+    # long-lived sign-in in the browser storage of that host).
+    pwa:
+        enabled: false
+        # A set-up device is signed out after this many days without being used. Each use renews
+        # its sign-in (the stored credential is replaced on every use), so a device in use never
+        # needs to be set up again.
+        inactivity_days: 90
+        # Optional hard limit after setup (days). 0 = none (default).
+        max_lifetime_days: 0
+        # After a device's credential is replaced, the previous one keeps working this long
+        # (seconds), for a second open tab. Using it later signs the device out (stolen copy).
+        rotation_grace_seconds: 120
+        # How long a new link can be used to set up a device (minutes). The bot deletes the message
+        # when it is used or expires.
+        enroll_minutes: 15
+        # Links (waiting or active) per user.
+        max_links_per_user: 5
+        # Post a notice in the management room when a link is set up.
+        notify_on_enroll: true

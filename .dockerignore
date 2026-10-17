@@ -1,0 +1,14 @@
+.git
+.gitignore
+*.md
+!THIRD-PARTY-NOTICES.md
+docs
+spikes
+config.yaml
+registration.yaml
+*.db
+*.db-shm
+*.db-wal
+/mrtc-sip-bridge
+vendor
+logs
