@@ -438,7 +438,7 @@ func (o *orderLog) get() []string {
 	return append([]string(nil), o.l...)
 }
 
-// fakeFeatures implements all four optional host interfaces.
+// fakeFeatures implements all five optional host interfaces.
 type fakeFeatures struct {
 	order *orderLog
 
@@ -457,6 +457,17 @@ type fakeFeatures struct {
 	opened    []string
 	cName     string
 	cSaved    bool
+
+	listPage  hostkit.ContactPage
+	listErr   error
+	listCalls []listCall
+}
+
+// listCall records one ListContacts call.
+type listCall struct {
+	ul            *bridgev2.UserLogin
+	q             string
+	offset, limit int
 }
 
 func (f *fakeFeatures) RosterOnly(*bridgev2.UserLogin) hostkit.RosterOnlyState {
@@ -515,6 +526,13 @@ func (f *fakeFeatures) ContactName(*bridgev2.UserLogin, string) (string, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.cName, f.cSaved
+}
+
+func (f *fakeFeatures) ListContacts(ul *bridgev2.UserLogin, q string, offset, limit int) (hostkit.ContactPage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listCalls = append(f.listCalls, listCall{ul, q, offset, limit})
+	return f.listPage, f.listErr
 }
 
 // prefsOnly implements only hostkit.RosterOnlyPrefs.

@@ -2,6 +2,7 @@ package widget
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/williamkray/mrtc-sip-bridge/internal/obstest"
+	"github.com/williamkray/mrtc-sip-bridge/pkg/hostkit"
 	"github.com/williamkray/mrtc-sip-bridge/pkg/obs"
 )
 
@@ -27,7 +29,7 @@ func widgetAllowlist() obstest.MetricAllowlist { return obstest.DefaultMetricAll
 func TestAllowlistMatchesEnums(t *testing.T) {
 	al := obstest.DefaultMetricAllowlist
 	want := map[string][]string{
-		metricRequests + "/widget.action": {actSession, actState, actNormalize, actCall, actDTMF, actHangup, actPrefs, actChat, actContact,
+		metricRequests + "/widget.action": {actSession, actState, actNormalize, actCall, actDTMF, actHangup, actPrefs, actChat, actContact, actContacts,
 			actDevEnroll, actDevSession, actDevConfirm, actDevForget},
 		metricRequests + "/outcome": {mOK, mUnauthorized, mForbidden, mRateLimited, mInvalid, mBusy, mNotReady, mError,
 			mExpired, mUsed, mReuse},
@@ -147,4 +149,28 @@ func TestMetricOutcomeMapping(t *testing.T) {
 			t.Errorf("%q: %s want %s", code, got, want)
 		}
 	}
+}
+
+// GET contacts records the metric only: no span, and neither names nor the query reach spans or logs.
+func TestContactsTelemetry(t *testing.T) {
+	ot := obstest.Setup(t)
+	e, ff := newFeatEnv(t)
+	ff.listPage = hostkit.ContactPage{Loaded: true, Total: 1, Items: []hostkit.ContactEntry{{Name: "Zebediah Quux", E164: "+15550001234"}}}
+	tok := e.session(tokAlice, roomPortal)
+	before := len(ot.Rec.Ended())
+	if w := e.do(http.MethodGet, api+"contacts?q=Zebediah+secretquery", tok, nil); w.Code != 200 {
+		t.Fatalf("contacts %d %s", w.Code, w.Body.String())
+	}
+	ff.listErr = errors.New("host failed")
+	e.do(http.MethodGet, api+"contacts?q=secretquery", tok, nil)
+	for _, sp := range ot.Rec.Ended()[before:] {
+		t.Errorf("contacts started span %q", sp.Name())
+	}
+	if n := ot.Sum(t, metricRequests, "widget.action", actContacts, "outcome", mOK); n != 1 {
+		t.Errorf("ok metric %v", n)
+	}
+	if n := ot.Sum(t, metricRequests, "widget.action", actContacts, "outcome", mError); n != 1 {
+		t.Errorf("error metric %v", n)
+	}
+	obstest.AssertNoSecrets(t, ot.Rec, e.logBuf, "Zebediah", "Quux", "secretquery")
 }

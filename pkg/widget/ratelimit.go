@@ -176,6 +176,7 @@ type limits struct {
 	chat        *limiter // chat per MXID: 5/min
 	contact     *limiter // contact per MXID: 10/min
 	prefs       *limiter // prefs per MXID: 10/min
+	contacts    *limiter // contacts per MXID: 5/s, burst 10
 
 	// Dialpad PWA (PWA-SPEC §7.1). Failed enroll/device-session requests count in sessionFail.
 	enrollIP     *limiter // device/enroll per client IP: 5/min
@@ -197,6 +198,7 @@ func newLimits(clk clock.Clock) limits {
 		chat:        newLimiter(clk, 5, time.Minute, 5),
 		contact:     newLimiter(clk, 10, time.Minute, 10),
 		prefs:       newLimiter(clk, 10, time.Minute, 10),
+		contacts:    newLimiter(clk, 5, time.Second, 10),
 
 		enrollIP:     newLimiter(clk, 5, time.Minute, 5),
 		devSessionIP: newLimiter(clk, 10, time.Minute, 10),
@@ -209,7 +211,7 @@ func newLimits(clk clock.Clock) limits {
 
 func (l limits) all() []*limiter {
 	return []*limiter{l.sessionIP, l.sessionFail, l.sessionUser, l.call, l.normalize, l.dtmf, l.hangup, l.state,
-		l.chat, l.contact, l.prefs,
+		l.chat, l.contact, l.prefs, l.contacts,
 		l.enrollIP, l.devSessionIP, l.devSession, l.devConfirm}
 }
 

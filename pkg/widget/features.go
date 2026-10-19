@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/trace"
 
@@ -286,5 +289,107 @@ func (s *Server) handlePrefs(w http.ResponseWriter, r *http.Request) (string, *a
 	}
 	s.finish(ctx, span, actPrefs, a, "", "")
 	writeJSON(w, http.StatusOK, prefsResp{OK: true, RosterOnly: st.On, Warning: s.expand(st.Warning), Message: msg})
+	return "", nil
+}
+
+// ---- contacts ----
+
+// Limits of GET contacts (WIDGET-SPEC §7).
+const (
+	contactsMaxQuery   = 64
+	contactsMaxOffset  = 10000
+	contactsMaxLimit   = 50
+	contactsDefLimit   = 25
+	contactsHostBudget = 2 * time.Second
+)
+
+type contactItem struct {
+	Name   string `json:"name"`
+	Number string `json:"number"`
+}
+
+type contactsResp struct {
+	OK         bool          `json:"ok"`
+	Loaded     bool          `json:"loaded"`
+	Total      int           `json:"total"`
+	NextOffset *int          `json:"next_offset"`
+	Items      []contactItem `json:"items"`
+}
+
+// intParam reads an optional integer query parameter in [lo, hi].
+func intParam(r *http.Request, key string, def, lo, hi int) (int, bool) {
+	v := r.URL.Query().Get(key)
+	if v == "" {
+		return def, true
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < lo || n > hi {
+		return 0, false
+	}
+	return n, true
+}
+
+// handleContacts serves GET contacts: one page of the user's named phone contacts. No span and no log
+// (it is typed-ahead search: names and queries must never be recorded); the metric alone counts it.
+func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request) (string, *apiError) {
+	a, e := s.authenticate(r)
+	if e != nil {
+		return "", e
+	}
+	if ok, retry := s.limits.contacts.allow(string(a.ss.user)); !ok {
+		return "", errRateLimited(retry)
+	}
+	if _, _, e := s.ready(a); e != nil {
+		return "", e
+	}
+	if s.feat.lister == nil {
+		return "", errNotSupported
+	}
+	q := r.URL.Query().Get("q")
+	if !utf8.ValidString(q) || utf8.RuneCountInString(q) > contactsMaxQuery {
+		return "", errBadRequest("The search is too long.")
+	}
+	q = strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, q))
+	offset, ok := intParam(r, "offset", 0, 0, contactsMaxOffset)
+	if !ok {
+		return "", errBadRequest("Invalid offset.")
+	}
+	limit, ok := intParam(r, "limit", contactsDefLimit, 1, contactsMaxLimit)
+	if !ok {
+		return "", errBadRequest("Invalid limit.")
+	}
+	ctx, cancel := budget(r.Context(), contactsHostBudget)
+	defer cancel()
+	// ListContacts reads memory only (hostkit contract); the budget only guards a misbehaving host.
+	page, err := s.feat.lister.ListContacts(a.rc.Login, q, offset, limit)
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
+		return "", s.featureErr(ctx, err)
+	}
+	resp := contactsResp{OK: true, Loaded: page.Loaded, Items: []contactItem{}}
+	if page.Loaded {
+		for _, it := range page.Items {
+			name := hostkit.DisplayContactName(it.Name)
+			if name == "" || it.E164 == "" {
+				continue // a host bug: contacts without a name are not listed
+			}
+			if len(resp.Items) == limit {
+				break
+			}
+			resp.Items = append(resp.Items, contactItem{Name: name, Number: it.E164})
+		}
+		resp.Total = max(page.Total, 0)
+		if next := offset + len(page.Items); next < resp.Total && len(page.Items) > 0 {
+			resp.NextOffset = &next
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 	return "", nil
 }

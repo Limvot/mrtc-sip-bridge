@@ -180,6 +180,7 @@ type features struct {
 	chat   hostkit.ChatOpener
 	saver  hostkit.ContactSaver
 	lookup hostkit.ContactLookup
+	lister hostkit.ContactLister
 }
 
 // featuresOf type-asserts f once against each optional interface.
@@ -189,6 +190,7 @@ func featuresOf(f any) features {
 	ft.chat, _ = f.(hostkit.ChatOpener)
 	ft.saver, _ = f.(hostkit.ContactSaver)
 	ft.lookup, _ = f.(hostkit.ContactLookup)
+	ft.lister, _ = f.(hostkit.ContactLister)
 	return ft
 }
 

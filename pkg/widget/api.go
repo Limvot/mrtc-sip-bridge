@@ -27,9 +27,10 @@ const (
 	actCall      = "call"
 	actDTMF      = "dtmf"
 	actHangup    = "hangup"
-	actPrefs     = "prefs"   // path prefs/roster_only
-	actChat      = "chat"    // optional host feature (hostkit.ChatOpener)
-	actContact   = "contact" // optional host feature (hostkit.ContactSaver)
+	actPrefs     = "prefs"    // path prefs/roster_only
+	actChat      = "chat"     // optional host feature (hostkit.ChatOpener)
+	actContact   = "contact"  // optional host feature (hostkit.ContactSaver)
+	actContacts  = "contacts" // optional host feature (hostkit.ContactLister), GET, no span
 
 	// Dialpad PWA endpoints: the path is api/v1/device/<x>, the metric action is actDev*.
 	actDevEnroll  = "enroll"
@@ -62,6 +63,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, action string)
 		method, fn = http.MethodPost, s.handleHangup
 	case actChat:
 		method, fn = http.MethodPost, s.handleChat
+	case actContacts:
+		method, fn = http.MethodGet, s.handleContacts
 	case actContact:
 		method, fn = http.MethodPost, s.handleContact
 	case "prefs/roster_only":
@@ -388,6 +391,7 @@ type featuresView struct {
 	RosterOnly  bool `json:"roster_only"`
 	Chat        bool `json:"chat"`
 	SaveContact bool `json:"save_contact"`
+	Contacts    bool `json:"contacts"`
 }
 
 type prefsView struct {
@@ -471,7 +475,8 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) (string, *a
 		resp.Login = loginView{Message: e.Message}
 	default:
 		resp.Login = loginView{Ready: true}
-		resp.Features = featuresView{RosterOnly: s.feat.prefs != nil, Chat: s.feat.chat != nil, SaveContact: s.feat.saver != nil}
+		resp.Features = featuresView{RosterOnly: s.feat.prefs != nil, Chat: s.feat.chat != nil, SaveContact: s.feat.saver != nil,
+			Contacts: s.feat.lister != nil}
 		// The host methods below read memory only (hostkit contract): state is polled every 1-5 s.
 		if s.feat.prefs != nil {
 			st := s.feat.prefs.RosterOnly(a.rc.Login)

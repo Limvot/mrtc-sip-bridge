@@ -2,6 +2,7 @@ package widget
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -32,12 +33,12 @@ func TestFeaturesDerivedFromTypeAssertion(t *testing.T) {
 	}
 	e := newEnv(t)
 	f, m := feat(e, e.session(tokAlice, roomPortal))
-	if f["roster_only"] != false || f["chat"] != false || f["save_contact"] != false || m["prefs"] != nil {
+	if f["roster_only"] != false || f["chat"] != false || f["save_contact"] != false || f["contacts"] != false || m["prefs"] != nil {
 		t.Errorf("none: %v", m)
 	}
 	e = newEnv(t, withFeatures(prefsOnly{}))
 	f, m = feat(e, e.session(tokAlice, roomPortal))
-	if f["roster_only"] != true || f["chat"] != false || f["save_contact"] != false {
+	if f["roster_only"] != true || f["chat"] != false || f["save_contact"] != false || f["contacts"] != false {
 		t.Errorf("prefsOnly: %v", f)
 	}
 	if p := m["prefs"].(map[string]any); p["roster_only"] != true {
@@ -45,14 +46,14 @@ func TestFeaturesDerivedFromTypeAssertion(t *testing.T) {
 	}
 	e, _ = newFeatEnv(t)
 	f, _ = feat(e, e.session(tokAlice, roomPortal))
-	if f["roster_only"] != true || f["chat"] != true || f["save_contact"] != true {
+	if f["roster_only"] != true || f["chat"] != true || f["save_contact"] != true || f["contacts"] != true {
 		t.Errorf("full: %v", f)
 	}
 	// Not ready (no login): all false.
 	e, _ = newFeatEnv(t)
 	tb := e.session(tokBob, roomBobMgmt)
 	f, m = feat(e, tb)
-	if f["roster_only"] != false || f["chat"] != false || f["save_contact"] != false || m["prefs"] != nil {
+	if f["roster_only"] != false || f["chat"] != false || f["save_contact"] != false || f["contacts"] != false || m["prefs"] != nil {
 		t.Errorf("not ready: %v", m)
 	}
 	// Standalone-style Deps: Features stays nil and the unsupported endpoints say so.
@@ -492,4 +493,215 @@ func TestMetricOutcomeUnavailable(t *testing.T) {
 func (e *env) post(path, tok string, body any) *httptest.ResponseRecorder {
 	e.clk.Advance(20 * time.Second)
 	return e.do(http.MethodPost, api+path, tok, body)
+}
+
+// ---- contacts ----
+
+func contactsPath(query string) string {
+	if query == "" {
+		return api + "contacts"
+	}
+	return api + "contacts?" + query
+}
+
+func TestContactsNotSupportedAndAuth(t *testing.T) {
+	e := newEnv(t)
+	tok := e.session(tokAlice, roomPortal)
+	if w := e.do(http.MethodGet, contactsPath(""), tok, nil); w.Code != 404 || decode(t, w)["error"] != hostkit.CodeNotSupported {
+		t.Errorf("without features: %d %s", w.Code, w.Body.String())
+	}
+	e = newEnv(t, withFeatures(prefsOnly{}))
+	tok = e.session(tokAlice, roomPortal)
+	if w := e.do(http.MethodGet, contactsPath(""), tok, nil); w.Code != 404 {
+		t.Errorf("prefsOnly: %d", w.Code)
+	}
+	e, ff := newFeatEnv(t)
+	if w := e.do(http.MethodGet, contactsPath(""), "", nil); w.Code != 401 {
+		t.Errorf("no session: %d", w.Code)
+	}
+	if w := e.do(http.MethodGet, contactsPath(""), "not-a-session", nil); w.Code != 401 {
+		t.Errorf("bad session: %d", w.Code)
+	}
+	// Login not ready (bob has no login): the standard refusal.
+	if w := e.do(http.MethodGet, contactsPath(""), e.session(tokBob, roomBobMgmt), nil); w.Code != 403 || decode(t, w)["error"] != codeLoginRequired {
+		t.Errorf("not ready: %d %s", w.Code, w.Body.String())
+	}
+	if n := len(ff.listCalls); n != 0 {
+		t.Errorf("host called %d times for refused requests", n)
+	}
+	if w := e.do(http.MethodPost, contactsPath(""), e.session(tokAlice, roomPortal), map[string]string{}); w.Code != 405 || w.Header().Get("Allow") != http.MethodGet {
+		t.Errorf("POST: %d allow %q", w.Code, w.Header().Get("Allow"))
+	}
+}
+
+func TestContactsParams(t *testing.T) {
+	long := strings.Repeat("a", 65)
+	cases := []struct {
+		name, query string
+		want        int
+		call        listCall // checked when want == 200
+	}{
+		{"defaults", "", 200, listCall{limit: 25}},
+		{"explicit", "q=ali&offset=50&limit=10", 200, listCall{q: "ali", offset: 50, limit: 10}},
+		{"trim", "q=%20ali%20", 200, listCall{q: "ali", limit: 25}},
+		{"control stripped", "q=a%00l%0Ai", 200, listCall{q: "ali", limit: 25}},
+		{"q 64 runes", "q=" + strings.Repeat("%C3%A9", 64), 200, listCall{q: strings.Repeat("é", 64), limit: 25}},
+		{"q 65 runes", "q=" + long, 400, listCall{}},
+		{"q invalid utf8", "q=%FF", 400, listCall{}},
+		{"limit max", "limit=50", 200, listCall{limit: 50}},
+		{"limit 0", "limit=0", 400, listCall{}},
+		{"limit 51", "limit=51", 400, listCall{}},
+		{"limit abc", "limit=abc", 400, listCall{}},
+		{"offset -1", "offset=-1", 400, listCall{}},
+		{"offset max", "offset=10000", 200, listCall{offset: 10000, limit: 25}},
+		{"offset huge", "offset=10001", 400, listCall{}},
+		{"offset overflow", "offset=99999999999999999999", 400, listCall{}},
+		{"unknown ignored", "zzz=1", 200, listCall{limit: 25}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e, ff := newFeatEnv(t)
+			ff.listPage = hostkit.ContactPage{Loaded: true}
+			w := e.do(http.MethodGet, contactsPath(c.query), e.session(tokAlice, roomPortal), nil)
+			if w.Code != c.want {
+				t.Fatalf("%d %s", w.Code, w.Body.String())
+			}
+			if c.want != 200 {
+				if decode(t, w)["error"] != codeBadRequest || len(ff.listCalls) != 0 {
+					t.Errorf("error %s, host calls %d", w.Body.String(), len(ff.listCalls))
+				}
+				return
+			}
+			if len(ff.listCalls) != 1 {
+				t.Fatalf("host calls %d", len(ff.listCalls))
+			}
+			got := ff.listCalls[0]
+			if got.ul != e.login || got.q != c.call.q || got.offset != c.call.offset || got.limit != c.call.limit {
+				t.Errorf("host call %+v, want %+v", got, c.call)
+			}
+		})
+	}
+}
+
+func TestContactsResponse(t *testing.T) {
+	e, ff := newFeatEnv(t)
+	tok := e.session(tokAlice, roomPortal)
+	ff.listPage = hostkit.ContactPage{Loaded: true, Total: 7, Items: []hostkit.ContactEntry{
+		{Name: "Alice", E164: "+15550000001"},
+		{Name: "Bob‮  B", E164: "+15550000002"},
+		{Name: strings.Repeat("é", 70), E164: "+15550000003"},
+		{Name: "‮\x00", E164: "+15550000004"}, // empty after cleaning: dropped
+	}}
+	w := e.do(http.MethodGet, contactsPath("limit=4&offset=2"), tok, nil)
+	if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("%d cache %q", w.Code, w.Header().Get("Cache-Control"))
+	}
+	m := decode(t, w)
+	items := m["items"].([]any)
+	if m["ok"] != true || m["loaded"] != true || m["total"] != float64(7) || len(items) != 3 {
+		t.Fatalf("resp %v", m)
+	}
+	if m["next_offset"] != float64(6) { // offset 2 + 4 host items
+		t.Errorf("next_offset %v", m["next_offset"])
+	}
+	for i, want := range []map[string]string{
+		{"name": "Alice", "number": "+15550000001"},
+		{"name": "Bob B", "number": "+15550000002"},
+		{"name": strings.Repeat("é", 64), "number": "+15550000003"},
+	} {
+		it := items[i].(map[string]any)
+		if it["name"] != want["name"] || it["number"] != want["number"] {
+			t.Errorf("item %d: %v", i, it)
+		}
+		if _, ok := it["jid"]; ok || len(it) != 2 {
+			t.Errorf("item %d has unexpected fields: %v", i, it)
+		}
+	}
+	// Last page: next_offset is null.
+	ff.listPage = hostkit.ContactPage{Loaded: true, Total: 2, Items: ff.listPage.Items[:1]}
+	m = decode(t, e.do(http.MethodGet, contactsPath("offset=1"), tok, nil))
+	if v, present := m["next_offset"]; !present || v != nil {
+		t.Errorf("next_offset %v present=%v", v, present)
+	}
+	ff.listPage = hostkit.ContactPage{Loaded: true, Total: 1, Items: ff.listPage.Items[:1]}
+	if m = decode(t, e.do(http.MethodGet, contactsPath(""), tok, nil)); m["next_offset"] != nil {
+		t.Errorf("single page next_offset %v", m["next_offset"])
+	}
+	// Offset beyond the end: no items, correct total, empty array (not null).
+	ff.listPage = hostkit.ContactPage{Loaded: true, Total: 3}
+	m = decode(t, e.do(http.MethodGet, contactsPath("offset=100"), tok, nil))
+	if it, ok := m["items"].([]any); !ok || len(it) != 0 || m["total"] != float64(3) || m["next_offset"] != nil {
+		t.Errorf("past end: %v", m)
+	}
+	// Not loaded: passthrough, items dropped.
+	ff.listPage = hostkit.ContactPage{Loaded: false, Total: 9, Items: []hostkit.ContactEntry{{Name: "X", E164: "+15550000009"}}}
+	m = decode(t, e.do(http.MethodGet, contactsPath(""), tok, nil))
+	if m["loaded"] != false || m["total"] != float64(0) || len(m["items"].([]any)) != 0 || m["next_offset"] != nil {
+		t.Errorf("not loaded: %v", m)
+	}
+	// A host returning more than limit is capped.
+	ff.listPage = hostkit.ContactPage{Loaded: true, Total: 5, Items: []hostkit.ContactEntry{
+		{Name: "A", E164: "+15550000001"}, {Name: "B", E164: "+15550000002"}, {Name: "C", E164: "+15550000003"}}}
+	m = decode(t, e.do(http.MethodGet, contactsPath("limit=2"), tok, nil))
+	if len(m["items"].([]any)) != 2 {
+		t.Errorf("cap: %v", m["items"])
+	}
+}
+
+func TestContactsHostErrors(t *testing.T) {
+	e, ff := newFeatEnv(t)
+	tok := e.session(tokAlice, roomPortal)
+	ff.listErr = hostkit.NewActionError(hostkit.CodeUnavailable, "Offline.")
+	if w := e.do(http.MethodGet, contactsPath(""), tok, nil); w.Code != 503 || decode(t, w)["error"] != hostkit.CodeUnavailable {
+		t.Errorf("ActionError: %d %s", w.Code, w.Body.String())
+	}
+	ff.listErr = context.DeadlineExceeded
+	if w := e.do(http.MethodGet, contactsPath(""), tok, nil); w.Code != 503 {
+		t.Errorf("deadline: %d", w.Code)
+	}
+	ff.listErr = errors.New("boom")
+	if w := e.do(http.MethodGet, contactsPath(""), tok, nil); w.Code != 500 || decode(t, w)["error"] != codeInternal {
+		t.Errorf("internal: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestContactsRateLimitPerUser(t *testing.T) {
+	e, ff := newFeatEnv(t)
+	ff.listPage = hostkit.ContactPage{Loaded: true}
+	t1 := e.session(tokAlice, roomPortal)
+	t2 := e.session(tokAlice, roomMgmt) // a second session of the same user shares the bucket
+	for i := 0; i < 10; i++ {
+		tok := t1
+		if i%2 == 1 {
+			tok = t2
+		}
+		if w := e.do(http.MethodGet, contactsPath(""), tok, nil); w.Code != 200 {
+			t.Fatalf("request %d: %d %s", i, w.Code, w.Body.String())
+		}
+	}
+	for _, tok := range []string{t1, t2} {
+		if w := e.do(http.MethodGet, contactsPath(""), tok, nil); w.Code != 429 || w.Header().Get("Retry-After") == "" {
+			t.Errorf("11th request: %d", w.Code)
+		}
+	}
+	e.clk.Advance(time.Second)
+	if w := e.do(http.MethodGet, contactsPath(""), t1, nil); w.Code != 200 {
+		t.Errorf("after refill: %d", w.Code)
+	}
+}
+
+func TestContactsDeviceSession(t *testing.T) {
+	ff := &fakeFeatures{order: &orderLog{}, listPage: hostkit.ContactPage{Loaded: true}}
+	p := newPWAEnv(t, withFeatures(ff))
+	_, tok := p.enroll()
+	s := p.exchange(tok).Session
+	if f := decode(t, p.do(http.MethodGet, api+"state", s, nil))["features"].(map[string]any); f["contacts"] != true {
+		t.Errorf("features %v", f)
+	}
+	if w := p.do(http.MethodGet, contactsPath("q=x"), s, nil); w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	if len(ff.listCalls) != 1 || ff.listCalls[0].ul != p.login {
+		t.Errorf("host calls %+v, want the device's own login", ff.listCalls)
+	}
 }
