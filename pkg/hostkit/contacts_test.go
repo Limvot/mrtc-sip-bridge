@@ -66,3 +66,36 @@ func TestActionError(t *testing.T) {
 		t.Fatal(err.Error())
 	}
 }
+
+func TestDisplayContactName(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"plain", "Alice", "Alice"},
+		{"trim", "  Alice  ", "Alice"},
+		{"collapse", "Alice \t\n  Smith", "Alice Smith"},
+		{"nbsp is space", "A\u00a0\u00a0B", "A B"},
+		{"control removed", "A\x00li\x07ce", "Alice"},
+		{"separators removed", "A\u2028B\u2029C", "ABC"},
+		{"bidi removed", "A\u202eB\u2066C\u2069D", "ABCD"},
+		{"all forbidden", "\u202e\x00\u2028", ""},
+		{"empty", "   ", ""},
+		{"invalid utf8", "A\xffB", "AB"},
+		{"truncated", strings.Repeat("é", 70), strings.Repeat("é", 64)},
+		{"exactly 64", strings.Repeat("x", 64), strings.Repeat("x", 64)},
+		{"truncate no trailing space", strings.Repeat("x", 63) + " yyy", strings.Repeat("x", 63)},
+		{"emoji", "Zoë 🙂", "Zoë 🙂"},
+	}
+	for _, c := range cases {
+		got := DisplayContactName(c.in)
+		if got != c.want {
+			t.Errorf("%s: DisplayContactName(%q) = %q, want %q", c.name, c.in, got, c.want)
+		}
+		if again := DisplayContactName(got); again != got {
+			t.Errorf("%s: not idempotent: %q -> %q", c.name, got, again)
+		}
+		if got != "" {
+			if _, ok := CleanContactName(got); !ok {
+				t.Errorf("%s: result %q fails CleanContactName", c.name, got)
+			}
+		}
+	}
+}

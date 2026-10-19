@@ -69,6 +69,42 @@ type ContactLookup interface {
 	ContactName(ul *bridgev2.UserLogin, e164 string) (name string, saved bool)
 }
 
+// ContactLister lists the user's named phone contacts for the Dialpad Contacts tab.
+type ContactLister interface {
+	// ListContacts returns one page of ul's named phone contacts. It is called on a request path (rate
+	// limited): it must read memory only (no network, no database) and never block. offset and limit are
+	// already validated by the widget (0 <= offset <= 10000, 1 <= limit <= 50).
+	//
+	// The list holds named phone contacts only: a number saved without a name, and contacts that are not
+	// phone numbers, are not listed. Every Name must have passed DisplayContactName and be non-empty; the
+	// host applies it BEFORE filtering and sorting so Total and the order match what is shown. Sort order:
+	// strings.ToLower(Name) ascending, ties by E164 ascending (no Unicode normalization or accent folding).
+	//
+	// query "" lists all. Otherwise an entry matches when strings.Contains(lower(Name), lower(query)), or
+	// when the query has at least 2 digits, consists only of digits and the characters + - ( ) . and space,
+	// and its digits are a substring of the digits of E164. Otherwise (no digits, or one digit, or other
+	// characters) only the name is matched. The widget passes the query trimmed, without control
+	// characters and of at most 64 runes.
+	//
+	// An offset at or beyond the number of matches yields no Items but the correct Total. A host whose
+	// contact list has not loaded yet returns ContactPage{Loaded: false}. The list may still be returned
+	// while the host is offline. Errors: *ActionError like the other features.
+	ListContacts(ul *bridgev2.UserLogin, query string, offset, limit int) (ContactPage, error)
+}
+
+// ContactEntry is one listed contact.
+type ContactEntry struct {
+	Name string // never empty; has passed DisplayContactName
+	E164 string // valid E.164
+}
+
+// ContactPage is the result of ListContacts.
+type ContactPage struct {
+	Items  []ContactEntry // at most limit
+	Total  int            // matches of the query over all pages
+	Loaded bool           // false: the host's contact list has not loaded yet (Items and Total are then empty)
+}
+
 // Codes of ActionError (and of the widget API errors) for the optional features.
 const (
 	CodeInvalidName  = "invalid_name"  // 400
@@ -105,4 +141,40 @@ func CleanContactName(s string) (string, bool) {
 		}
 	}
 	return s, true
+}
+
+// DisplayContactName makes s safe and short for display: it drops the runes CleanContactName forbids
+// (control characters, U+2028/U+2029, bidi embedding/override/isolate controls), maps every run of other
+// whitespace to one space, trims, replaces invalid UTF-8 with nothing, and truncates to MaxContactNameRunes
+// runes. It returns "" when nothing is left. It is idempotent. Hosts apply it to roster names (which come
+// from arbitrary servers) before listing them; the widget applies it again defensively.
+func DisplayContactName(s string) string {
+	var b strings.Builder
+	space := false
+	n := 0
+	for _, r := range strings.ToValidUTF8(s, "") {
+		switch {
+		case r == '\u2028' || r == '\u2029':
+			continue
+		case r >= '\u202a' && r <= '\u202e', r >= '\u2066' && r <= '\u2069':
+			continue
+		case unicode.IsSpace(r):
+			space = true
+			continue
+		case unicode.IsControl(r):
+			continue
+		}
+		if space && b.Len() > 0 {
+			if n++; n > MaxContactNameRunes {
+				break
+			}
+			b.WriteByte(' ')
+		}
+		space = false
+		if n++; n > MaxContactNameRunes {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return strings.TrimSpace(b.String())
 }
