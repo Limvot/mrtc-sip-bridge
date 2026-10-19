@@ -375,18 +375,22 @@ func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request) (string,
 	}
 	resp := contactsResp{OK: true, Loaded: page.Loaded, Items: []contactItem{}}
 	if page.Loaded {
+		// consumed counts the host entries this page covers (dropped ones included, so the next page
+		// starts after them); a host returning more than limit is cut at limit.
+		consumed := 0
 		for _, it := range page.Items {
+			if consumed == limit {
+				break
+			}
+			consumed++
 			name := hostkit.DisplayContactName(it.Name)
 			if name == "" || it.E164 == "" {
 				continue // a host bug: contacts without a name are not listed
 			}
-			if len(resp.Items) == limit {
-				break
-			}
 			resp.Items = append(resp.Items, contactItem{Name: name, Number: it.E164})
 		}
 		resp.Total = max(page.Total, 0)
-		if next := offset + len(page.Items); next < resp.Total && len(page.Items) > 0 {
+		if next := offset + consumed; next < resp.Total && consumed > 0 {
 			resp.NextOffset = &next
 		}
 	}

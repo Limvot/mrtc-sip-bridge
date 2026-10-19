@@ -643,8 +643,15 @@ func TestContactsResponse(t *testing.T) {
 	ff.listPage = hostkit.ContactPage{Loaded: true, Total: 5, Items: []hostkit.ContactEntry{
 		{Name: "A", E164: "+15550000001"}, {Name: "B", E164: "+15550000002"}, {Name: "C", E164: "+15550000003"}}}
 	m = decode(t, e.do(http.MethodGet, contactsPath("limit=2"), tok, nil))
-	if len(m["items"].([]any)) != 2 {
-		t.Errorf("cap: %v", m["items"])
+	if len(m["items"].([]any)) != 2 || m["next_offset"] != float64(2) { // the next page starts after the shown items
+		t.Errorf("cap: %v next %v", m["items"], m["next_offset"])
+	}
+	// Dropped entries still advance next_offset; a page whose entries were all dropped keeps paging.
+	ff.listPage = hostkit.ContactPage{Loaded: true, Total: 5, Items: []hostkit.ContactEntry{
+		{Name: "\u202e", E164: "+15550000001"}, {Name: "", E164: "+15550000002"}}}
+	m = decode(t, e.do(http.MethodGet, contactsPath("limit=2&offset=1"), tok, nil))
+	if len(m["items"].([]any)) != 0 || m["next_offset"] != float64(3) {
+		t.Errorf("all dropped: %v next %v", m["items"], m["next_offset"])
 	}
 }
 

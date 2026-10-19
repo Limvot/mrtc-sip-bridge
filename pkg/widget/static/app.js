@@ -192,8 +192,9 @@
       S.features = b.features || {};
       S.prefs = b.prefs || null;
       render();
-      // The roster had not loaded: retry on the next successful poll while the tab is open.
-      if (contactsVisible() && C.fetched && !C.loaded && !C.loading && !S.hidden) fetchContacts(false);
+      // Retry on the next successful poll while the tab is open: the roster had not loaded, or the list
+      // was wiped (login not ready for a while, feature gone) and the tab is back.
+      if (contactsVisible() && !C.loading && !S.hidden && (C.fetched ? !C.loaded : !C.error)) fetchContacts(false);
     }, function (e) {
       S.failures++;
       setStatus(e && e.res ? errText(e.res) : 'Cannot reach the bridge. Retrying...', true);
