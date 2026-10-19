@@ -258,7 +258,7 @@ dots). Attributes are listed with their closed value sets.
 | `mrtcsip.media.rtp.jitter` | Histogram | `s` | (none) | RFC 3550 interarrival jitter sampled per call every 5 s. Buckets 0.001, 0.0025, 0.005, 0.01, 0.02, 0.04, 0.08, 0.16 | 2 |
 | `mrtcsip.media.concealed` | Counter | `{frame}` | `media.leg` (sip_to_rtc, rtc_to_sip) | silence/PLC frames inserted on underrun | 2 |
 | `mrtcsip.dtmf.sent` | Counter | `{digit}` | `dtmf.method` (rfc4733) | count of DTMF events sent; **never the digits** | 3 |
-| `mrtcsip.widget.requests` | Counter | `{request}` | `widget.action` (session, state, normalize, call, dtmf, hangup, prefs, chat, contact; PWA: enroll, device_session, device_confirm, forget), `outcome` (ok, unauthorized, forbidden, rate_limited, invalid, busy, not_ready, error; PWA: expired, used, reuse), `widget.client` (widget, pwa) | every Dialpad widget and PWA API request (WIDGET-SPEC §7, PWA-SPEC §7), including rejected ones | W3, P3 |
+| `mrtcsip.widget.requests` | Counter | `{request}` | `widget.action` (session, state, normalize, call, dtmf, hangup, prefs, chat, contact, contacts; PWA: enroll, device_session, device_confirm, forget), `outcome` (ok, unauthorized, forbidden, rate_limited, invalid, busy, not_ready, error; PWA: expired, used, reuse), `widget.client` (widget, pwa) | every Dialpad widget and PWA API request (WIDGET-SPEC §7, PWA-SPEC §7), including rejected ones | W3, P3 |
 | `mrtcsip.widget.sessions` | ObservableGauge | `{session}` | (none) | unexpired widget sessions of the running widget servers | W3 |
 | `mrtcsip.widget.installs` | Counter | `{room}` | `outcome` (installed, updated, unchanged, removed, failed) | per room the widget installer checks (Ensure, sweeps, removal) | W3 |
 | `mrtcsip.widget.device_links` | ObservableGauge | `{link}` | `state` (pending, active) | unexpired Dialpad PWA links, from the device store's cached counts (refreshed by the janitor; no I/O in the callback). Only reported while a server has the PWA enabled | P3 |
@@ -520,8 +520,9 @@ Host spans of the mautrix-jabber embedded host (sipcalls build, PHASEJ-SPEC §8)
 
 ### 5.12 Dialpad widget (WIDGET-SPEC §10)
 
-Spans of `pkg/widget` (host-class, both hosts). `GET state`, `POST normalize` and static files get **no
-spans** (polling would flood traces; they appear only in `mrtcsip.widget.requests`). Action spans start
+Spans of `pkg/widget` (host-class, both hosts). `GET state`, `POST normalize`, `GET contacts` and static files get **no
+spans** (polling and typed-ahead search would flood traces; they appear only in `mrtcsip.widget.requests`).
+Contact names and search queries are never put on spans, logs or metrics. Action spans start
 only after the session is authenticated, so unauthenticated traffic cannot create traces. The trace
 context of incoming HTTP requests is never extracted (every widget span is a fresh root). Root spans
 annotate the ctx logger; handlers log through `obs.Logger(ctx, &s.log)`.

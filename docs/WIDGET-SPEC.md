@@ -340,6 +340,7 @@ session takes effect immediately.
 | `state` per session | 4/s | 429 |
 | `chat` per MXID | 5/min | 429 |
 | `contact` per MXID | 10/min | 429 |
+| `contacts` per MXID (shared by every widget and PWA session of the user) | 5/s, burst 10 | 429 |
 | `prefs` per MXID | 10/min | 429 |
 
 Buckets are evicted after 30 min idle.
@@ -352,7 +353,10 @@ mautrix `requestlog` access logger is **not** used on the widget routes. Our own
 `action`, `user`, `room_id`, `outcome`, plus `to` for `call`. Static asset requests are not logged. SIP
 credentials, registrar details and the login's own number are never returned by the API; the
 login's number appears only implicitly, through the self-dial error. Contact names (and previous names)
-typed in the widget are never logged, traced or put on metrics: only the number and outcome are.
+typed in the widget are never logged, traced or put on metrics: only the number and outcome are. The same holds for
+the Contacts tab (§7, `GET contacts`): contact names, numbers and search queries are shown only to the
+owner's session, are never logged, traced or recorded in metrics, and the clients keep the list in memory
+only (never `localStorage`, IndexedDB or the service worker cache; the PWA wipes it on every sign-out).
 
 ---
 
@@ -437,12 +441,13 @@ and the messages are the same strings the commands reply with.
 | Method, path | Body | Response | Notes |
 |---|---|---|---|
 | `POST session` | §5.3 | §5.3 | no auth header |
-| `GET state` | | `{room:{kind:"portal"\|"management", number, contact?:{name, saved}}, login:{ready, message}, call: null \| CallView, features:{roster_only, chat, save_contact}, prefs: null \| {roster_only, warning}}` | polled. `features` and `prefs` come from the optional host features (§7.5); `room.contact` only for portals when the host can look contacts up |
+| `GET state` | | `{room:{kind:"portal"\|"management", number, contact?:{name, saved}}, login:{ready, message}, call: null \| CallView, features:{roster_only, chat, save_contact, contacts}, prefs: null \| {roster_only, warning}}` | polled. `features` and `prefs` come from the optional host features (§7.5); `room.contact` only for portals when the host can look contacts up |
 | `POST normalize` | `{number}` | `{ok, e164, error?, message?, chat_ok?}` | `phone.Normalize` + `CheckDestination` (prefix, self, NANP); no call. `chat_ok` (only when the host offers Message or Save contact): the number may be texted or saved even when the call policy refuses it |
 | `POST call` | `{}` or `{number}`, optional `name` | `{ok:true, number, message, contact?, warning?}` or error | `{}` only in portals (the room's number, as `call` without args). With `name` the contact is saved first (best effort: a failure only adds `warning`) |
 | `POST chat` | `{number, name?}` | `{ok:true, number, room_id, created, pending, contact?, message}` or error | optional feature. With `name` the contact is saved first and a failure aborts. `pending:true` (empty `room_id`): the room is still being created |
 | `POST contact` | `{number?, name}` | `{ok:true, number, name, previous_name, changed, message}` or error | optional feature. Without `number`: the portal's own number (the session's room, never the body) |
 | `POST prefs/roster_only` | `{on}` (required) | `{ok:true, roster_only, warning, message}` or error | optional feature |
+| `GET contacts?q=&offset=&limit=` | | `{ok:true, loaded, total, next_offset, items:[{name, number}]}` or error | optional feature (`ContactLister`, §7.5). One page of the session user's own named phone contacts (never another login's; there is no login or user parameter). `q`: optional search, trimmed, control characters stripped, at most 64 runes and valid UTF-8 else 400 `bad_request`. `offset` 0..10000 (default 0), `limit` 1..50 (default 25); a non-integer or out-of-range value is 400 `bad_request`; unknown parameters are ignored. `total` counts the matches over all pages; `next_offset` is `offset+len(items)` while that is below `total`, else `null`; an offset at or past the end gives empty `items` and the correct `total`. `loaded:false` (empty `items`, `total` 0): the host's contact list has not loaded yet, retry shortly. Names are cleaned (`hostkit.DisplayContactName`) and never empty; numbers are E.164; no JIDs. 404 `not_supported` without the feature, 403 `login_required` / 503 `not_ready` when the login is not ready, 429 `rate_limited` (`Retry-After`), 503 `unavailable` on a host error or deadline. Handler order: authenticate, limiter, ready, supported. `Cache-Control: no-store`. GET only (405 with `Allow: GET`). No span; metric action `contacts` |
 | `POST dtmf` | `{digits}` | `{ok:true, count}` or error | 1-32 of `0-9*#A-D` |
 | `POST hangup` | `{}` | `{ok:true}` or error | |
 
@@ -473,7 +478,7 @@ widget can offer "Open room" (§9).
 
 ### 7.5 Optional host features
 
-A host may offer four extras by passing one value as `widget.Deps.Features`. The value implements any
+A host may offer five extras by passing one value as `widget.Deps.Features`. The value implements any
 subset of these small interfaces of `pkg/hostkit` (`contacts.go`); `widget.New` type-asserts it once, and
 a feature exists only when its interface is implemented. A nil `Features` (the standalone bridge, any
 older embedder) offers none, `GET state` reports `features` all false and the UI shows none of the
@@ -483,10 +488,21 @@ controls. All methods take the verified, ready `*bridgev2.UserLogin` (the same r
 - `ContactSaver` (`SaveContact`): Name and Save contact. Same semantics as the host's save-contact: the
   name is set and replaces an existing name.
 - `ContactLookup` (`ContactName`): the "Saved as ..." line of a portal.
+- `ContactLister` (`ListContacts`): the Contacts tab (`GET contacts`). The list holds named phone contacts
+  only: a number saved without a name, and contacts that are not phone numbers (plain Jabber contacts,
+  group MMS, short codes), do not appear. The host cleans every name with `hostkit.DisplayContactName`
+  (removes control, bidi and U+2028/9 characters, collapses whitespace, truncates to 64 runes) BEFORE
+  filtering and sorting, drops entries whose cleaned name is empty, and sorts by `strings.ToLower(name)`
+  ascending, ties by E.164. Search rule: a name match is a case-insensitive substring; a number match
+  needs a query of at least 2 digits made only of digits and `+ - ( ) . space`, whose digits are a
+  substring of the number's digits; otherwise only the name is matched. No Unicode normalization or accent
+  folding. The widget re-cleans names defensively and drops any empty one.
 
 Rules for hosts:
 - `RosterOnly` and `ContactName` run on every `GET state` poll (every 1-5 s): they read memory only and
-  never block.
+  never block. `ListContacts` runs per `GET contacts` request (at most 5/s per user) and also reads memory
+  only: hold any lock only long enough to copy the data, then filter, sort and slice outside it. It does
+  not need the host to be online (the cached list is still useful; Call and Message refuse by themselves).
 - Every method returns before its context ends. `OpenChat` returns `ChatRoom{Pending: true}` when room
   creation outlives the deadline (and finishes in the background), and never runs history backfill inline.
 - Errors: `*hostkit.ActionError` (`invalid_number`, `invalid_name`, `unavailable`; the message is shown
@@ -603,6 +619,27 @@ Layout (mobile first, works in a 300 px side panel):
   Results appear in a status line, with an "Open chat" link after Message. An "Only ring for contacts"
   checkbox (with the host's warning) sits at the bottom. The PWA has the same controls (the Name field,
   Message, Save contact, and the checkbox in the settings sheet), without the portal parts.
+- **Contacts tab** (only when `state.features.contacts` and the login is ready; the default tab stays
+  Dial, and with one tab the tab bar is hidden so the standalone bridge looks unchanged). A
+  `role="tablist"` with Dial and Contacts (roving tabindex; Left/Right/Home/End move focus and activate).
+  The Dial panel holds the portal call box, the number form and the keypad; the Contacts panel holds a
+  search field (`type="search"`, 64 characters, debounced 250 ms), a polite status line, the list and an
+  explicit "Show more" button (no infinite scroll). Rows are built with `textContent` only: the name,
+  the number, and Call and Message buttons (`aria-label` "Call <name>" / "Message <name>"; Message only with
+  `features.chat`). Call is `POST call {number}` and Message is `POST chat {number}` (both without a name),
+  with the shared result line and "Open chat" link, so the per-MXID `call` and `chat` limits apply. Buttons
+  are disabled while an action runs, a call is active, or the login is not ready. During a call the Dial tab
+  is forced and the bar hidden (DTMF keypad, hang-up); the previous tab returns afterwards. Fetching: page 1
+  on first open, again when re-entering the tab if the data is over 60 s old or `loaded:false`, and, while
+  `loaded:false` and the tab is open, on the next successful state poll; never from the poll otherwise.
+  Every request carries a sequence number and a response is applied only if it is the latest (leaving the
+  tab or signing out also invalidates it); appended pages are de-duplicated by number. A 429 shows "Slow
+  down" and keeps the list; other errors show the text and a Retry button. States: "Loading contacts...",
+  "Your contacts have not loaded yet. Try again in a moment.", "No saved phone contacts yet. Save a number from
+  the Dial tab.", "No matches", and "N contacts" / "N matches" (the live region speaks only after a
+  response is applied). After "Show more" focus stays on the button, or moves to the last row's Call
+  button when the list ended. The list is memory only and is wiped when the login stops being ready or
+  the feature disappears (and, in the PWA, on every sign-out).
 - **Hang up** button (red, replaces Call while `call != null`). Inbound `incoming` shows "Decline".
 - After `call {number}`: when `state.call.room_id` differs from the current room, show "Open room" as a
   `https://matrix.to/#/<room_id>` link (new tab). Optional progressive step: ask for the
@@ -633,13 +670,13 @@ Add to the span catalogue (§5.11-style table, new §5.12) and the metric table 
 | `widget.contact` | SERVER | root | `matrix.sender`, `matrix.room_id`, `call.remote.e164`, `widget.contact.form` (room, number), `widget.contact.changed`, `outcome` |
 | `bridge.widget.sweep` | INTERNAL | root (startup) / linked root (login attach); periodic passes start a span **only** when they have unseen rooms | `rooms.checked`, `rooms.installed`, `rooms.updated`, `rooms.failed`, `trigger` (startup, login, periodic, disable) |
 
-`GET state`, `POST normalize` and static files get **no spans** (polling would flood traces); they
-appear only in metrics. Root spans annotate the ctx logger, and handlers log through `obs.Logger(ctx,
+`GET state`, `POST normalize`, `GET contacts` and static files get **no spans** (polling and typed-ahead
+search would flood traces, and names and queries must not be recorded); they appear only in metrics. Root spans annotate the ctx logger, and handlers log through `obs.Logger(ctx,
 &s.log)`.
 
 | Metric | Instrument | Attributes |
 |---|---|---|
-| `mrtcsip.widget.requests` | Counter `{request}` | `widget.action` (session, state, normalize, call, dtmf, hangup, prefs, chat, contact), `outcome` (ok, unauthorized, forbidden, rate_limited, invalid, busy, not_ready, error) |
+| `mrtcsip.widget.requests` | Counter `{request}` | `widget.action` (session, state, normalize, call, dtmf, hangup, prefs, chat, contact, contacts), `outcome` (ok, unauthorized, forbidden, rate_limited, invalid, busy, not_ready, error) |
 | `mrtcsip.widget.sessions` | ObservableGauge `{session}` | none |
 | `mrtcsip.widget.installs` | Counter `{room}` | `outcome` (installed, updated, unchanged, removed, failed) |
 
@@ -648,6 +685,14 @@ No MXIDs, numbers or room IDs on metrics.
 ---
 
 ## 11. Tests
+
+- Contacts (`pkg/widget/features_test.go`, `telemetry_test.go`, `static_test.go`): `not_supported`, 401, login
+  refusal, parameter table, defaults, `next_offset`/`total`, `loaded:false`, host error mapping, name
+  re-cleaning, `no-store`, the per-user 5/s burst 10 limit shared across sessions, GET-only, a PWA device
+  session reaching its own login, the allowlist enum, no span and no names or query in spans or logs, and
+  that every `$('id')` in both `app.js` files exists in `index.html`. `hostkit.DisplayContactName` has a
+  table test. The tab keyboard behaviour has no automated test (no JS harness): see the manual checks in
+  the release notes.
 
 - `pkg/calls`: `Snapshot` follows each state transition (fake clock, existing fakes). The race test
   calls `Snapshot` while the actor runs. Busy calls are not reported.

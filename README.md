@@ -107,6 +107,11 @@ ghost and you answer to start the call.
   standalone bridge shows none of them. The widget never logs or traces contact names (the host's own
   roster logging may). See
   [docs/WIDGET-SPEC.md](docs/WIDGET-SPEC.md) §7.5 for the host interfaces.
+- **Contacts tab (embedded in mautrix-jabber only):** when the host lists contacts, the Dialpad and the
+  PWA get a **Contacts** tab next to **Dial**: search your saved phone contacts by name or digits, then
+  tap **Call** or **Message** on a row. Only named phone contacts appear (numbers saved without a name
+  and plain Jabber contacts do not). Names are shown to you only and are kept in memory, never stored in
+  the browser or logged.
 - **Supported clients:** Sable and gomuks (both show room widgets and answer the widget's OpenID
   request). **Element X does not show widgets**: use `call`, `dtmf` and `hangup` there.
 - **Who can use it:** only the owner of the login the room belongs to. The widget URL carries a per-room

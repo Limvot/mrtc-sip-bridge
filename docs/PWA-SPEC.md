@@ -523,7 +523,7 @@ unchanged (§3.2).
 | `device/confirm` per device | 60/h |
 | `dialpad-link` per user (command) | 5/h (prevents flooding the table and the room) |
 
-Action limits (`call` 5/min, `dtmf`, `hangup`, `state`) are per MXID and shared with widget sessions,
+Action limits (`call` 5/min, `dtmf`, `hangup`, `contacts` 5/s) are per MXID and shared with widget sessions,
 which is right because they protect the same SIP account.
 
 ---
@@ -685,6 +685,17 @@ tap to fill and call. Stored in `localStorage` on the phone only, never sent any
 the settings sheet: "Recent numbers stay on this phone. Anyone who can unlock it can see them." A toggle
 turns them off (and clears them), plus a **Clear** button; **Forget this device** asks whether to clear
 them too. No contact names (no address-book access; the Contact Picker API is not used).
+
+### 9.5 Tabs and Contacts
+
+When the server reports `features.contacts` (WIDGET-SPEC §7.5, §9) the main screen has a Dial / Contacts tab
+bar (Dial by default; hidden during a call). The Dial tab keeps everything above, including the local
+Recent list (§9.3); the Contacts tab is the same as in the room widget: search, paging, and a Call and a
+Message button per row. The list, the query and the request sequence live in memory only. They are cleared
+by `stopApp`, so every sign-out path wipes them: Forget this device, a revoked, expired or reused device,
+a blocked sign-in, and a sign-out in another tab (`storage` event). Nothing about contacts is written to
+`localStorage`, IndexedDB or the service worker cache (`sw.js` never touches `api/`). The shell changed,
+so `sw.js` `VERSION` is bumped.
 
 ### 9.4 Callback caveat and the Matrix client
 

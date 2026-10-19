@@ -275,8 +275,16 @@ Optional features (WIDGET-SPEC §7.5): set `Deps.Features` to a value implementi
     type ContactLookup interface {
         ContactName(ul *bridgev2.UserLogin, e164 string) (name string, saved bool)          // memory only, never blocks
     }
+    type ContactLister interface {                                                          // the Contacts tab
+        ListContacts(ul *bridgev2.UserLogin, query string, offset, limit int) (ContactPage, error) // memory only, never blocks
+    }
 
-Rules: `RosterOnly` and `ContactName` run on every state poll, so they read memory only. Every method
+Rules: `RosterOnly` and `ContactName` run on every state poll, so they read memory only. `ListContacts` runs
+per `GET contacts` request (5/s per user) and also reads memory only (copy under your lock, then filter, sort and
+slice outside it). It lists **named phone contacts only**, with every name passed through
+`hostkit.DisplayContactName` before filtering and sorting, sorted by lowercase name then E.164, searched
+by the rule in the `ContactLister` godoc (name substring, or at least 2 digits of the number), and returns
+`ContactPage{Loaded: false}` until your contact list has loaded. Never log or trace names or queries. Every method
 returns before its context ends. `OpenChat` runs no history backfill inline (start it afterwards in its
 own goroutine) and returns `ChatRoom{Pending: true}` when creation outlives the deadline. Failures the
 user should see are `hostkit.NewActionError(code, msg)` (`invalid_number`, `invalid_name`,

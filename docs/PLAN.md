@@ -17,6 +17,9 @@ first. Update the checkboxes and the "Current state" section as work lands, so t
 - v0.2.0: the Dialpad widget and PWA gain optional host features (`Deps.Features`, `pkg/hostkit/contacts.go`,
   WIDGET-SPEC §7.5): roster-only toggle, Message, Name / Save contact and a "Saved as" line. Only
   mautrix-jabber offers them; the standalone bridge is unchanged.
+- Widget Contacts tab (unreleased, issue 6 phase 2): optional `hostkit.ContactLister` (`ListContacts`, plus
+  `DisplayContactName`), `GET api/v1/contacts` (paged search, per-MXID 5/s, no span), `features.contacts`, and a
+  Dial / Contacts tab bar in the room widget and the PWA. Call history is deferred. WIDGET-SPEC §7, §7.5, §9.
 - Next: Phase 4 (robustness).
 
 ## Goal
