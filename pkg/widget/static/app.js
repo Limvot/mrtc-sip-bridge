@@ -16,7 +16,12 @@
   var S = { session: '', room: null, login: { ready: true, message: '' }, call: null,
             busyUntil: 0, hidden: document.hidden, errMsg: '', failures: 0,
             numberOK: false, pollTimer: 0, pollSeq: 0,
-            features: {}, prefs: null, chatOK: false, actBusy: false, prefBusy: false };
+            features: {}, prefs: null, chatOK: false, actBusy: false, prefBusy: false,
+            tab: 'dial' };
+  // Contacts tab state. Memory only: never stored, wiped when the login or feature goes away.
+  var C = { q: '', items: [], total: 0, next: null, loaded: true, fetched: false, loading: false,
+            error: '', retry: false, seq: 0, at: 0, timer: 0 };
+  var CONTACTS_PAGE = 25, CONTACTS_STALE_MS = 60000;
 
   // ---- UI helpers ----
   function setStatus(text, isErr) {
@@ -187,6 +192,8 @@
       S.features = b.features || {};
       S.prefs = b.prefs || null;
       render();
+      // The roster had not loaded: retry on the next successful poll while the tab is open.
+      if (contactsVisible() && C.fetched && !C.loaded && !C.loading && !S.hidden) fetchContacts(false);
     }, function (e) {
       S.failures++;
       setStatus(e && e.res ? errText(e.res) : 'Cannot reach the bridge. Retrying...', true);
@@ -229,6 +236,18 @@
     rl.textContent = num ? 'Contact: ' + num : '';
 
     var canIdle = !inCall && ready;
+    // Tabs: only with the contacts feature; during a call the Dial panel is forced and the bar hidden.
+    var tabsOn = ready && !inCall && !!S.features.contacts;
+    var tab = (inCall || !tabsOn) ? 'dial' : S.tab;
+    show('tabs', tabsOn);
+    show('panel-dial', tab === 'dial');
+    show('panel-contacts', tab === 'contacts');
+    ['dial', 'contacts'].forEach(function (t) {
+      $('tab-' + t).setAttribute('aria-selected', String(tab === t));
+      $('tab-' + t).tabIndex = tab === t ? 0 : -1;
+    });
+    if (!ready || !S.features.contacts) wipeContacts();
+    syncRowButtons();
     var portal = kind === 'portal' && !!num;
     show('callbox', canIdle && portal);
     show('call-room', canIdle && portal);
@@ -316,10 +335,10 @@
     if (e) S.errMsg = failText(e);
     return e ? render() : afterAction();
   }
-  function doCall(number) {
+  function doCall(number, fromList) {
     S.errMsg = '';
     var body = number ? { number: number } : {};
-    var name = number && S.features.save_contact ? nameVal() : '';
+    var name = number && !fromList && S.features.save_contact ? nameVal() : '';
     if (name) body.name = name;
     beginAction();
     setStatus('Placing call...');
@@ -332,8 +351,8 @@
       return endAction();
     }, endAction);
   }
-  function doMessage() {
-    var body = { number: $('number').value.trim() }, name = S.features.save_contact ? nameVal() : '';
+  function doMessage(number, fromList) {
+    var body = { number: number }, name = !fromList && S.features.save_contact ? nameVal() : '';
     if (name) body.name = name;
     beginAction();
     authed('POST', 'chat', body).then(function (r) {
@@ -417,6 +436,133 @@
     }
   }
 
+  // ---- Contacts tab ----
+  function contactsVisible() { return !!S.features.contacts && S.login.ready !== false && !S.call && S.tab === 'contacts'; }
+  function wipeContacts() {
+    clearTimeout(C.timer);
+    C.seq++; C.q = ''; C.items = []; C.total = 0; C.next = null; C.loaded = true; C.fetched = false;
+    C.loading = false; C.error = ''; C.retry = false; C.at = 0;
+    if ($('contact-search').value) $('contact-search').value = '';
+    renderContacts();
+  }
+  function contactsStatusText() {
+    if (C.error) return C.error;
+    if (C.loading && !C.items.length) return 'Loading contacts...';
+    if (!C.fetched) return '';
+    if (!C.loaded) return 'Your contacts have not loaded yet. Try again in a moment.';
+    if (!C.items.length) return C.q ? 'No matches' : 'No saved phone contacts yet. Save a number from the Dial tab.';
+    var n = C.total, one = n === 1;
+    return n + (C.q ? (one ? ' match' : ' matches') : (one ? ' contact' : ' contacts'));
+  }
+  function syncRowButtons() {
+    var bs = $('contacts-list').querySelectorAll('button');
+    var off = S.actBusy || !!S.call || S.login.ready === false;
+    for (var i = 0; i < bs.length; i++) {
+      bs[i].disabled = off;
+      if (bs[i].dataset.act === 'message') bs[i].hidden = !S.features.chat;
+    }
+  }
+  function renderContacts() {
+    var list = $('contacts-list'), hadFocus = document.activeElement === $('contacts-more');
+    while (list.firstChild) list.removeChild(list.firstChild);
+    C.items.forEach(function (it) {
+      var li = document.createElement('li');
+      var who = document.createElement('div'); who.className = 'cwho';
+      var nm = document.createElement('span'); nm.className = 'cname'; nm.textContent = it.name;
+      var nu = document.createElement('span'); nu.className = 'cnum'; nu.textContent = it.number;
+      who.appendChild(nm); who.appendChild(nu);
+      var acts = document.createElement('div'); acts.className = 'cacts';
+      [['call', 'Call'], ['message', 'Message']].forEach(function (a) {
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'btn' + (a[0] === 'call' ? ' primary' : ''); b.dataset.act = a[0];
+        b.textContent = a[1];
+        b.setAttribute('aria-label', a[1] + ' ' + it.name);
+        b.addEventListener('click', function () {
+          if (S.actBusy || S.call) return;
+          if (a[0] === 'call') doCall(it.number, true); else doMessage(it.number, true);
+        });
+        acts.appendChild(b);
+      });
+      li.appendChild(who); li.appendChild(acts);
+      list.appendChild(li);
+    });
+    $('contacts-status').textContent = contactsStatusText();
+    $('contacts-status').className = 'preview' + (C.error ? ' err' : '');
+    $('contacts-retry').hidden = !C.retry;
+    $('contacts-more').hidden = C.next === null || !!C.error && !C.items.length;
+    syncRowButtons();
+    if (hadFocus && $('contacts-more').hidden) {
+      var last = list.querySelector('li:last-child button');
+      if (last) last.focus();
+    }
+  }
+  // Fetches page 1 (append=false) or the next page. Responses of superseded requests are dropped.
+  function fetchContacts(append) {
+    var my = ++C.seq, off = append && C.next !== null ? C.next : 0;
+    var path = 'contacts?limit=' + CONTACTS_PAGE + '&offset=' + off + (C.q ? '&q=' + encodeURIComponent(C.q) : '');
+    C.loading = true; C.error = ''; C.retry = false;
+    renderContacts();
+    authed('GET', path).then(function (r) {
+      if (my !== C.seq) return;
+      C.loading = false;
+      var b = r.body;
+      if (r.status !== 200 || b.ok === false) {
+        C.error = errText(r); C.retry = r.status !== 429; // 429: keep the list, the next input retries
+        return renderContacts();
+      }
+      var items = (b.items || []).filter(function (it) { return it && typeof it.name === 'string' && typeof it.number === 'string'; });
+      if (append) {
+        var seen = {}; C.items.forEach(function (it) { seen[it.number] = true; });
+        items = items.filter(function (it) { return !seen[it.number]; });
+        C.items = C.items.concat(items);
+      } else C.items = items;
+      C.loaded = b.loaded !== false; C.total = b.total || 0;
+      C.next = typeof b.next_offset === 'number' ? b.next_offset : null;
+      C.fetched = true; C.at = Date.now();
+      renderContacts();
+    }, function (e) {
+      if (my !== C.seq) return;
+      C.loading = false;
+      if (e && e.res) { wipeContacts(); S.errMsg = failText(e); return render(); } // re-authentication failed
+      C.error = failText(e); C.retry = true;
+      renderContacts();
+    });
+  }
+  function enterContacts() {
+    if (!C.fetched || !C.loaded || Date.now() - C.at > CONTACTS_STALE_MS) fetchContacts(false);
+    else renderContacts();
+  }
+  function setTab(t) {
+    if (S.tab === t) return;
+    S.tab = t;
+    render();
+    if (t === 'contacts') enterContacts(); else { C.seq++; C.loading = false; }
+  }
+  $('tab-dial').addEventListener('click', function () { setTab('dial'); });
+  $('tab-contacts').addEventListener('click', function () { setTab('contacts'); });
+  $('tabs').addEventListener('keydown', function (e) {
+    var order = ['dial', 'contacts'], i = order.indexOf(S.tab), n = -1;
+    if (e.key === 'ArrowRight') n = (i + 1) % order.length;
+    else if (e.key === 'ArrowLeft') n = (i + order.length - 1) % order.length;
+    else if (e.key === 'Home') n = 0;
+    else if (e.key === 'End') n = order.length - 1;
+    if (n < 0) return;
+    e.preventDefault();
+    setTab(order[n]);
+    $('tab-' + order[n]).focus();
+  });
+  $('contact-search').addEventListener('input', function () {
+    clearTimeout(C.timer);
+    C.timer = setTimeout(function () {
+      var v = $('contact-search').value.trim();
+      if (v === C.q && C.fetched) return;
+      C.q = v; C.items = []; C.total = 0; C.next = null;
+      fetchContacts(false);
+    }, 250);
+  });
+  $('contacts-more').addEventListener('click', function () { if (!C.loading && C.next !== null) fetchContacts(true); });
+  $('contacts-retry').addEventListener('click', function () { fetchContacts(false); });
+
   // ---- Number field with debounced server-side normalisation ----
   var normTimer = 0, normSeq = 0;
   function onNumberInput() {
@@ -470,7 +616,7 @@
   // ---- Wiring ----
   $('call-room').addEventListener('click', function () { if (!S.actBusy) doCall(''); });
   $('call-number').addEventListener('click', function () { if (S.numberOK && !S.actBusy) doCall($('number').value.trim()); });
-  $('message-number').addEventListener('click', function () { if (S.chatOK && !S.actBusy) doMessage(); });
+  $('message-number').addEventListener('click', function () { if (S.chatOK && !S.actBusy) doMessage($('number').value.trim(), false); });
   $('save-number').addEventListener('click', function () { if (S.chatOK && nameVal() && !S.actBusy) doSaveNumber(); });
   $('contact-name').addEventListener('input', render);
   $('save-name').addEventListener('input', render);

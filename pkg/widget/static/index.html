@@ -13,6 +13,12 @@
   <p id="status" class="status" role="status" aria-live="polite">Connecting...</p>
   <p id="roomline" class="roomline" hidden></p>
 
+  <div id="tabs" class="tabs" role="tablist" aria-label="Dialpad sections" hidden>
+    <button id="tab-dial" class="tab" type="button" role="tab" aria-selected="true" aria-controls="panel-dial" tabindex="0">Dial</button>
+    <button id="tab-contacts" class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-contacts" tabindex="-1">Contacts</button>
+  </div>
+
+  <div id="panel-dial" class="panel" role="tabpanel" aria-labelledby="tab-dial">
   <section id="callbox" hidden>
     <button id="call-room" class="btn primary" type="button" hidden>Call</button>
     <p id="contact-line" class="roomline" hidden></p>
@@ -46,6 +52,16 @@
     <button id="abcd-toggle" class="btn link" type="button" aria-expanded="false" aria-controls="keypad-extra">Show A-D</button>
     <div id="keypad-extra" class="keypad extra" role="group" aria-label="Extra keys A to D" hidden></div>
   </section>
+  </div>
+
+  <div id="panel-contacts" class="panel" role="tabpanel" aria-labelledby="tab-contacts" hidden>
+    <label for="contact-search">Search contacts</label>
+    <input id="contact-search" type="search" maxlength="64" autocomplete="off" spellcheck="false" placeholder="Name or number">
+    <p id="contacts-status" class="preview" role="status" aria-live="polite"></p>
+    <button id="contacts-retry" class="btn" type="button" hidden>Retry</button>
+    <ul id="contacts-list" class="contacts"></ul>
+    <button id="contacts-more" class="btn" type="button" hidden>Show more</button>
+  </div>
 
   <p id="result" class="preview" role="status" aria-live="polite" hidden></p>
   <a id="open-chat" class="btn secondary" href="#" target="_blank" rel="noopener noreferrer" hidden>Open chat</a>
