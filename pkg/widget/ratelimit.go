@@ -173,6 +173,9 @@ type limits struct {
 	dtmf        *limiter // dtmf per MXID: 10/s, burst 32
 	hangup      *limiter // hangup per MXID: 30/min
 	state       *limiter // state per session: 4/s
+	chat        *limiter // chat per MXID: 5/min
+	contact     *limiter // contact per MXID: 10/min
+	prefs       *limiter // prefs per MXID: 10/min
 
 	// Dialpad PWA (PWA-SPEC §7.1). Failed enroll/device-session requests count in sessionFail.
 	enrollIP     *limiter // device/enroll per client IP: 5/min
@@ -191,6 +194,9 @@ func newLimits(clk clock.Clock) limits {
 		dtmf:        newLimiter(clk, 10, time.Second, 32),
 		hangup:      newLimiter(clk, 30, time.Minute, 30),
 		state:       newLimiter(clk, 4, time.Second, 4),
+		chat:        newLimiter(clk, 5, time.Minute, 5),
+		contact:     newLimiter(clk, 10, time.Minute, 10),
+		prefs:       newLimiter(clk, 10, time.Minute, 10),
 
 		enrollIP:     newLimiter(clk, 5, time.Minute, 5),
 		devSessionIP: newLimiter(clk, 10, time.Minute, 10),
@@ -203,6 +209,7 @@ func newLimits(clk clock.Clock) limits {
 
 func (l limits) all() []*limiter {
 	return []*limiter{l.sessionIP, l.sessionFail, l.sessionUser, l.call, l.normalize, l.dtmf, l.hangup, l.state,
+		l.chat, l.contact, l.prefs,
 		l.enrollIP, l.devSessionIP, l.devSession, l.devConfirm}
 }
 

@@ -17,9 +17,14 @@ input{width:100%;min-height:52px;font:inherit;font-size:1.3rem;padding:8px 12px;
 .btn.danger{background:var(--red);border-color:var(--red);color:#fff}
 .btn.link{background:none;border:0;min-height:48px;font-size:1rem;font-weight:500;text-decoration:underline}
 .btn:disabled{opacity:.5;cursor:default}
-.btn:focus-visible,input:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.btn:focus-visible,input:focus-visible,input[type=text]:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 .keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .keypad.extra{grid-template-columns:repeat(4,1fr);margin-top:4px}
 .keypad .btn{min-height:60px;flex-direction:column;font-size:1.5rem;line-height:1.1;padding:4px}
 .keypad .btn small{font-size:.6rem;font-weight:500;color:var(--mut);letter-spacing:.1em;min-height:.7rem}
+.row{display:flex;gap:8px}
+.row .btn{flex:1}
+.check{display:flex;align-items:center;gap:8px;font-size:1rem;color:var(--fg)}
+.check input{width:24px;min-height:24px}
+.hint{margin:0;font-size:.85rem;color:var(--mut)}
 @media (prefers-reduced-motion:no-preference){.btn{transition:opacity .15s}}

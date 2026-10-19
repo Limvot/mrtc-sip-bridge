@@ -338,6 +338,9 @@ session takes effect immediately.
 | `dtmf` per MXID | 10/s, burst 32 (the media queue still applies `ErrDTMFBusy`) | 429 |
 | `hangup` per MXID | 30/min | 429 |
 | `state` per session | 4/s | 429 |
+| `chat` per MXID | 5/min | 429 |
+| `contact` per MXID | 10/min | 429 |
+| `prefs` per MXID | 10/min | 429 |
 
 Buckets are evicted after 30 min idle.
 
@@ -348,7 +351,8 @@ count, as `dtmf.digit_count`). Numbers and MXIDs are allowed on spans and logs, 
 mautrix `requestlog` access logger is **not** used on the widget routes. Our own log line per action has
 `action`, `user`, `room_id`, `outcome`, plus `to` for `call`. Static asset requests are not logged. SIP
 credentials, registrar details and the login's own number are never returned by the API; the
-login's number appears only implicitly, through the self-dial error.
+login's number appears only implicitly, through the self-dial error. Contact names (and previous names)
+typed in the widget are never logged, traced or put on metrics: only the number and outcome are.
 
 ---
 
@@ -433,9 +437,12 @@ and the messages are the same strings the commands reply with.
 | Method, path | Body | Response | Notes |
 |---|---|---|---|
 | `POST session` | §5.3 | §5.3 | no auth header |
-| `GET state` | | `{room:{kind:"portal"\|"management", number}, login:{ready, message}, call: null \| CallView}` | polled |
-| `POST normalize` | `{number}` | `{ok, e164, error?, message?}` | `phone.Normalize` + `CheckDestination` (prefix, self, NANP); no call |
-| `POST call` | `{}` or `{number}` | `{ok:true, number, message}` or error | `{}` only in portals (the room's number, as `call` without args) |
+| `GET state` | | `{room:{kind:"portal"\|"management", number, contact?:{name, saved}}, login:{ready, message}, call: null \| CallView, features:{roster_only, chat, save_contact}, prefs: null \| {roster_only, warning}}` | polled. `features` and `prefs` come from the optional host features (§7.5); `room.contact` only for portals when the host can look contacts up |
+| `POST normalize` | `{number}` | `{ok, e164, error?, message?, chat_ok?}` | `phone.Normalize` + `CheckDestination` (prefix, self, NANP); no call. `chat_ok` (only when the host offers Message or Save contact): the number may be texted or saved even when the call policy refuses it |
+| `POST call` | `{}` or `{number}`, optional `name` | `{ok:true, number, message, contact?, warning?}` or error | `{}` only in portals (the room's number, as `call` without args). With `name` the contact is saved first (best effort: a failure only adds `warning`) |
+| `POST chat` | `{number, name?}` | `{ok:true, number, room_id, created, pending, contact?, message}` or error | optional feature. With `name` the contact is saved first and a failure aborts. `pending:true` (empty `room_id`): the room is still being created |
+| `POST contact` | `{number?, name}` | `{ok:true, number, name, previous_name, changed, message}` or error | optional feature. Without `number`: the portal's own number (the session's room, never the body) |
+| `POST prefs/roster_only` | `{on}` (required) | `{ok:true, roster_only, warning, message}` or error | optional feature |
 | `POST dtmf` | `{digits}` | `{ok:true, count}` or error | 1-32 of `0-9*#A-D` |
 | `POST hangup` | `{}` | `{ok:true}` or error | |
 
@@ -454,13 +461,48 @@ answered_at, can_dtmf}`. `phase` is a UI enum mapped from the actor state:
 Error codes (from the shared actions, §8.1): `invalid_number`, `not_allowed`, `self_dial`, `line_busy`,
 `outbound_disabled`, `no_active_call`, `not_connected`, `dtmf_unsupported`, `invalid_digits`,
 `dtmf_busy`, `not_ready` (manager nil), `login_required` (refusal text), `unauthorized`, `forbidden`,
-`rate_limited`, `bad_request`, `internal`.
+`rate_limited`, `bad_request`, `internal`. The optional features add `invalid_name` (400), `unavailable`
+(503: the host is temporarily unable, e.g. XMPP offline, or the bridge took too long) and `not_supported`
+(404: the host lacks the feature; the UI never offers it).
 
 Scoping, as for the commands: in a portal, `hangup`/`dtmf` target the call in *that* room
 (`Hangup(login, roomID)`); in the management room they target the login's active call in any room
 (`roomID=""`). `call {number}` from any room is the `call <number>` path (it may create a portal; the
 callback ring happens in that portal). The response and `state.call.room_id` give the portal, so the
 widget can offer "Open room" (§9).
+
+### 7.5 Optional host features
+
+A host may offer four extras by passing one value as `widget.Deps.Features`. The value implements any
+subset of these small interfaces of `pkg/hostkit` (`contacts.go`); `widget.New` type-asserts it once, and
+a feature exists only when its interface is implemented. A nil `Features` (the standalone bridge, any
+older embedder) offers none, `GET state` reports `features` all false and the UI shows none of the
+controls. All methods take the verified, ready `*bridgev2.UserLogin` (the same ready gate as calling).
+- `RosterOnlyPrefs` (`RosterOnly`, `SetRosterOnly`): the "Only ring for contacts" toggle.
+- `ChatOpener` (`OpenChat`): the Message button. Returns the chat room of an E.164 number.
+- `ContactSaver` (`SaveContact`): Name and Save contact. Same semantics as the host's save-contact: the
+  name is set and replaces an existing name.
+- `ContactLookup` (`ContactName`): the "Saved as ..." line of a portal.
+
+Rules for hosts:
+- `RosterOnly` and `ContactName` run on every `GET state` poll (every 1-5 s): they read memory only and
+  never block.
+- Every method returns before its context ends. `OpenChat` returns `ChatRoom{Pending: true}` when room
+  creation outlives the deadline (and finishes in the background), and never runs history backfill inline.
+- Errors: `*hostkit.ActionError` (`invalid_number`, `invalid_name`, `unavailable`; the message is shown
+  as is and `$cmdprefix` is expanded) maps to its HTTP status. A deadline or cancellation is 503
+  `unavailable` ("The bridge took too long. Try again."). Anything else is 500 `internal`, logged
+  scrubbed.
+- Save-then-act ordering: `chat` with a name saves the contact first and aborts when the save fails, so
+  the room is created with the right name. `call` with a name saves first but a failed save only returns
+  a `warning`: a call is time-critical.
+- Number policy: Message and Save contact use `phone.Normalize` and the destination check, but only an
+  invalid number fails (`hostkit.CheckChatNumberAction`). `dial_allowed_prefixes` and self-dial are call
+  policy and do not apply to texting. Short codes are refused with a hint to use the host's `pm` command.
+- Names are checked with `hostkit.CleanContactName` (1-64 runes, no control, line-separator or bidi
+  control characters) before the host sees them.
+- The widget never navigates: it shows an "Open chat" `matrix.to` link, so no extra Widget API
+  capability is requested.
 
 ### 7.4 Polling, not SSE
 
@@ -554,6 +596,13 @@ Layout (mobile first, works in a 300 px side panel):
 - **Keypad** 3×4 (`1-9 * 0 #`, with letter subtitles, A-D behind a toggle). When idle, a key adds to the
   number field. When `can_dtmf`, each press sends `POST dtmf` (presses are coalesced while one request is
   in flight, ≤32 digits). The keys pressed are shown only in the page, masked after 5 s.
+- **Optional host features** (§7.5, shown only when `state.features` says so): a Name field (up to
+  64 characters) and a Message button next to Call, and a "Save contact" link, in the number form. Message
+  and Save are enabled once `normalize` returns `chat_ok`, and Save also needs a name. The portal view
+  shows "Saved as <name>" / "In your contacts" / "Not in your contacts" and a Save/Rename contact form.
+  Results appear in a status line, with an "Open chat" link after Message. An "Only ring for contacts"
+  checkbox (with the host's warning) sits at the bottom. The PWA has the same controls (the Name field,
+  Message, Save contact, and the checkbox in the settings sheet), without the portal parts.
 - **Hang up** button (red, replaces Call while `call != null`). Inbound `incoming` shows "Decline".
 - After `call {number}`: when `state.call.room_id` differs from the current room, show "Open room" as a
   `https://matrix.to/#/<room_id>` link (new tab). Optional progressive step: ask for the
@@ -575,10 +624,13 @@ Add to the span catalogue (§5.11-style table, new §5.12) and the metric table 
 | Span | Kind | Class | Attributes |
 |---|---|---|---|
 | `widget.session` | SERVER | root | `matrix.sender` (on success), `matrix.room_id`, `widget.room.kind`, `outcome` (ok, bad_key, openid_invalid, openid_error, no_user, forbidden, rate_limited) |
-| `widget.call` | SERVER | root | `matrix.sender`, `matrix.room_id`, `call.remote.e164`, `widget.call.form` (room, number), `outcome` = error code or ok. `call.outbound` links to it (PlaceCall reads the ctx span, as for `cmd.call`) |
+| `widget.call` | SERVER | root | `matrix.sender`, `matrix.room_id`, `call.remote.e164`, `widget.call.form` (room, number), `widget.contact.saved` (only with a name), `outcome` = error code or ok. `call.outbound` links to it (PlaceCall reads the ctx span, as for `cmd.call`) |
 | `widget.dtmf` | SERVER | root | `matrix.sender`, `matrix.room_id`, `dtmf.digit_count`, `outcome` |
 | `widget.hangup` | SERVER | root | `matrix.sender`, `matrix.room_id`, `outcome` |
 | `widget.openid.verify` | CLIENT | child-only (under `widget.session`) | `server.address`, `outcome`; the HTTP client span uses the fixed template |
+| `widget.prefs` | SERVER | root | `matrix.sender`, `matrix.room_id`, `widget.prefs.roster_only`, `outcome` |
+| `widget.chat` | SERVER | root | `matrix.sender`, `matrix.room_id`, `call.remote.e164`, `widget.chat.created`, `widget.chat.pending`, `widget.contact.saved` (only with a name), `outcome` |
+| `widget.contact` | SERVER | root | `matrix.sender`, `matrix.room_id`, `call.remote.e164`, `widget.contact.form` (room, number), `widget.contact.changed`, `outcome` |
 | `bridge.widget.sweep` | INTERNAL | root (startup) / linked root (login attach); periodic passes start a span **only** when they have unseen rooms | `rooms.checked`, `rooms.installed`, `rooms.updated`, `rooms.failed`, `trigger` (startup, login, periodic, disable) |
 
 `GET state`, `POST normalize` and static files get **no spans** (polling would flood traces); they
@@ -587,7 +639,7 @@ appear only in metrics. Root spans annotate the ctx logger, and handlers log thr
 
 | Metric | Instrument | Attributes |
 |---|---|---|
-| `mrtcsip.widget.requests` | Counter `{request}` | `widget.action` (session, state, normalize, call, dtmf, hangup), `outcome` (ok, unauthorized, forbidden, rate_limited, invalid, busy, not_ready, error) |
+| `mrtcsip.widget.requests` | Counter `{request}` | `widget.action` (session, state, normalize, call, dtmf, hangup, prefs, chat, contact), `outcome` (ok, unauthorized, forbidden, rate_limited, invalid, busy, not_ready, error) |
 | `mrtcsip.widget.sessions` | ObservableGauge `{session}` | none |
 | `mrtcsip.widget.installs` | Counter `{room}` | `outcome` (installed, updated, unchanged, removed, failed) |
 
@@ -619,6 +671,11 @@ No MXIDs, numbers or room IDs on metrics.
     sweep.
   - Telemetry: span names and classes. No spans for `state`. No orphan roots (obstest).
 - `internal/importcheck`: `pkg/widget` is host-class, and core packages must not import it.
+- Optional features (`features_test.go`): capabilities derived by type assertion (none, prefs only, all,
+  not ready), `room.contact` in state, `chat`/`contact`/`prefs` protocol checks, validation, the
+  chat-ok policy, save-before-act ordering, pending, host error mapping with scrubbed logs, call with a
+  name (including a failed save), the new limiters (and their eviction), `chat_ok` on normalize, and span,
+  attribute and metric checks including that a marker name never reaches spans or logs.
 - JS: no toolchain in the repo, so it is checked manually in the live test. Keep the JS small and
   dependency-free.
 - jabber (`sipcalls` tag): `ResolveRoom` refuses group MMS/MUC rooms and logins without a SIP account,

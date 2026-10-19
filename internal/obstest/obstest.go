@@ -293,7 +293,7 @@ var DefaultMetricAllowlist = MetricAllowlist{
 	"mrtcsip.media.concealed":   {"media.leg": {"sip_to_rtc", "rtc_to_sip"}},
 	"mrtcsip.dtmf.sent":         {"dtmf.method": {"rfc4733"}},
 	"mrtcsip.widget.requests": {
-		"widget.action": {"session", "state", "normalize", "call", "dtmf", "hangup", "enroll", "device_session", "device_confirm", "forget"},
+		"widget.action": {"session", "state", "normalize", "call", "dtmf", "hangup", "prefs", "chat", "contact", "enroll", "device_session", "device_confirm", "forget"},
 		"outcome":       {"ok", "unauthorized", "forbidden", "rate_limited", "invalid", "busy", "not_ready", "error", "expired", "used", "reuse"},
 		"widget.client": {"widget", "pwa"},
 	},

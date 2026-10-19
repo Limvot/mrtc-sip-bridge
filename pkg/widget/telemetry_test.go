@@ -27,7 +27,7 @@ func widgetAllowlist() obstest.MetricAllowlist { return obstest.DefaultMetricAll
 func TestAllowlistMatchesEnums(t *testing.T) {
 	al := obstest.DefaultMetricAllowlist
 	want := map[string][]string{
-		metricRequests + "/widget.action": {actSession, actState, actNormalize, actCall, actDTMF, actHangup,
+		metricRequests + "/widget.action": {actSession, actState, actNormalize, actCall, actDTMF, actHangup, actPrefs, actChat, actContact,
 			actDevEnroll, actDevSession, actDevConfirm, actDevForget},
 		metricRequests + "/outcome": {mOK, mUnauthorized, mForbidden, mRateLimited, mInvalid, mBusy, mNotReady, mError,
 			mExpired, mUsed, mReuse},

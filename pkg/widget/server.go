@@ -154,6 +154,10 @@ type Deps struct {
 	Redact func(ctx context.Context, room id.RoomID, evt id.EventID) error
 	// CommandPrefix is used in notices ("`!sip dialpad-revoke k3m9qa`"); default from Bridge.Config.
 	CommandPrefix string
+
+	// Features optionally implements hostkit.RosterOnlyPrefs, ChatOpener, ContactSaver and/or
+	// ContactLookup (WIDGET-SPEC §7.5). nil = none (the UI hides those controls).
+	Features any
 }
 
 // ErrDeviceLoginGone is returned by Deps.ResolveDevice when the device's login no longer exists or
@@ -165,7 +169,40 @@ const (
 	requestTimeout = 10 * time.Second
 	janitorEvery   = time.Minute
 	msgNotReady    = "The bridge is still starting. Try again in a moment."
+
+	// replyReserve is left of the request deadline to write the response after a host call.
+	replyReserve = 500 * time.Millisecond
 )
+
+// features are the optional host features found in Deps.Features (nil members: not offered).
+type features struct {
+	prefs  hostkit.RosterOnlyPrefs
+	chat   hostkit.ChatOpener
+	saver  hostkit.ContactSaver
+	lookup hostkit.ContactLookup
+}
+
+// featuresOf type-asserts f once against each optional interface.
+func featuresOf(f any) features {
+	var ft features
+	ft.prefs, _ = f.(hostkit.RosterOnlyPrefs)
+	ft.chat, _ = f.(hostkit.ChatOpener)
+	ft.saver, _ = f.(hostkit.ContactSaver)
+	ft.lookup, _ = f.(hostkit.ContactLookup)
+	return ft
+}
+
+// budget returns ctx bounded so a host call leaves replyReserve to write the response: the deadline is
+// min(now+max, ctx's deadline - replyReserve).
+func budget(ctx context.Context, max time.Duration) (context.Context, context.CancelFunc) {
+	dl := time.Now().Add(max)
+	if d, ok := ctx.Deadline(); ok {
+		if d = d.Add(-replyReserve); d.Before(dl) {
+			dl = d
+		}
+	}
+	return context.WithDeadline(ctx, dl)
+}
 
 // Server is the widget HTTP server plus its installer.
 type Server struct {
@@ -182,6 +219,7 @@ type Server struct {
 	hsURL      string
 	serverName string
 	defaultCC  string
+	feat       features
 
 	sessions *sessionStore
 	neg      *negCache
@@ -308,6 +346,7 @@ func New(cfg hostkit.WidgetConfig, d Deps) (*Server, error) {
 		hsURL:      strings.TrimRight(d.HomeserverURL, "/"),
 		serverName: d.ServerName,
 		defaultCC:  d.DefaultCountryCode,
+		feat:       featuresOf(d.Features),
 		sessions:   newSessionStore(d.Clock),
 		neg:        newNegCache(d.Clock),
 		limits:     newLimits(d.Clock),
@@ -610,6 +649,8 @@ var (
 	errForbidden    = &apiError{Status: http.StatusForbidden, Code: codeForbidden, Message: "You are not allowed to use this widget here."}
 	errInternal     = &apiError{Status: http.StatusInternalServerError, Code: codeInternal, Message: "Something went wrong."}
 	errNotReady     = &apiError{Status: http.StatusServiceUnavailable, Code: codeNotReady, Message: msgNotReady}
+	errInvalidName  = &apiError{Status: http.StatusBadRequest, Code: hostkit.CodeInvalidName, Message: "Use a name of 1-64 characters without line breaks."}
+	errNotSupported = &apiError{Status: http.StatusNotFound, Code: hostkit.CodeNotSupported, Message: "This bridge does not support that from the Dialpad."}
 )
 
 func errRateLimited(retry time.Duration) *apiError {

@@ -258,7 +258,7 @@ dots). Attributes are listed with their closed value sets.
 | `mrtcsip.media.rtp.jitter` | Histogram | `s` | (none) | RFC 3550 interarrival jitter sampled per call every 5 s. Buckets 0.001, 0.0025, 0.005, 0.01, 0.02, 0.04, 0.08, 0.16 | 2 |
 | `mrtcsip.media.concealed` | Counter | `{frame}` | `media.leg` (sip_to_rtc, rtc_to_sip) | silence/PLC frames inserted on underrun | 2 |
 | `mrtcsip.dtmf.sent` | Counter | `{digit}` | `dtmf.method` (rfc4733) | count of DTMF events sent; **never the digits** | 3 |
-| `mrtcsip.widget.requests` | Counter | `{request}` | `widget.action` (session, state, normalize, call, dtmf, hangup; PWA: enroll, device_session, device_confirm, forget), `outcome` (ok, unauthorized, forbidden, rate_limited, invalid, busy, not_ready, error; PWA: expired, used, reuse), `widget.client` (widget, pwa) | every Dialpad widget and PWA API request (WIDGET-SPEC §7, PWA-SPEC §7), including rejected ones | W3, P3 |
+| `mrtcsip.widget.requests` | Counter | `{request}` | `widget.action` (session, state, normalize, call, dtmf, hangup, prefs, chat, contact; PWA: enroll, device_session, device_confirm, forget), `outcome` (ok, unauthorized, forbidden, rate_limited, invalid, busy, not_ready, error; PWA: expired, used, reuse), `widget.client` (widget, pwa) | every Dialpad widget and PWA API request (WIDGET-SPEC §7, PWA-SPEC §7), including rejected ones | W3, P3 |
 | `mrtcsip.widget.sessions` | ObservableGauge | `{session}` | (none) | unexpired widget sessions of the running widget servers | W3 |
 | `mrtcsip.widget.installs` | Counter | `{room}` | `outcome` (installed, updated, unchanged, removed, failed) | per room the widget installer checks (Ensure, sweeps, removal) | W3 |
 | `mrtcsip.widget.device_links` | ObservableGauge | `{link}` | `state` (pending, active) | unexpired Dialpad PWA links, from the device store's cached counts (refreshed by the janitor; no I/O in the callback). Only reported while a server has the PWA enabled | P3 |
@@ -510,6 +510,9 @@ Host spans of the mautrix-jabber embedded host (sipcalls build, PHASEJ-SPEC §8)
 | `bridge.sip_connect` | INTERNAL | root | SIP account start for a jabber login; the single retry after 30 s is a linked root with `retry=true`. Attributes: `sip.user.masked`, `server.address`, `network.transport`, `xmpp.login.jid`. |
 | `bridge.sip_disconnect` | INTERNAL | root | `EndLogin` then account stop when the owning client disconnects. |
 | `bridge.calls.pl_sweep` | INTERNAL | linked root | Call power-level sweep of the login's Cheogram 1:1 portals; `portals.checked`, `portals.updated`, `portals.failed`. |
+| `bridge.calls.open_chat` | INTERNAL | linked root | The widget's Message: room creation detached from the request (linked to `widget.chat`); `xmpp.login.jid`, `call.remote.e164`, `created`. The MAM backfill that follows is its own `mam.backfill_on_view` linked root (`mam.trigger=widget_chat`). |
+| `bridge.calls.inbound_filtered` | SERVER | root | Roster-only rejection of an inbound call (480): `xmpp.login.jid`, `call.remote.e164`, `outcome=rejected`, `reason=not_in_roster`. No metric. |
+| `cmd.roster_only_calls`, `cmd.save_contact` | CONSUMER | root | `cmd.roster_only_calls` via `hostkit.WithSpan` (sipcalls build); `cmd.save_contact` via jabber's own `withSpan` (all builds, same naming and `cmd.name` attribute). Arguments (the contact name) never recorded. |
 | `cmd.sip_login` | CONSUMER | root | `hostkit.WithSpan`; arguments never recorded. |
 | `cmd.sip_login.submit` | CONSUMER | root | The prompt submit arrives as a separate message. `outcome`, `sip.user.masked`, `server.address`, `network.transport`, `call.local.e164`. |
 | `cmd.sip_logout`, `cmd.sip_status` | CONSUMER | root | `hostkit.WithSpan`. |
@@ -526,9 +529,12 @@ annotate the ctx logger; handlers log through `obs.Logger(ctx, &s.log)`.
 | Span | Kind | Class | Attributes |
 |---|---|---|---|
 | `widget.session` | SERVER | root | `matrix.sender` (on success), `matrix.room_id`, `widget.room.kind` (portal, management), `outcome` (ok, bad_key, openid_invalid, openid_error, no_user, forbidden, rate_limited, error). Started after the per-IP limits and body decoding pass. |
-| `widget.call` | SERVER | root | `matrix.sender`, `matrix.room_id`, `call.remote.e164`, `widget.call.form` (room, number), `outcome` (an API error code or ok). `call.outbound` links to it (PlaceCall reads the ctx span, as for `cmd.call`). |
+| `widget.call` | SERVER | root | `matrix.sender`, `matrix.room_id`, `call.remote.e164`, `widget.call.form` (room, number), `widget.contact.saved` (bool, only when a name was sent), `outcome` (an API error code or ok). `call.outbound` links to it (PlaceCall reads the ctx span, as for `cmd.call`). |
 | `widget.dtmf` | SERVER | root | `matrix.sender`, `matrix.room_id`, `dtmf.digit_count`, `outcome`. **Never the digits.** |
 | `widget.hangup` | SERVER | root | `matrix.sender`, `matrix.room_id`, `outcome` |
+| `widget.prefs` | SERVER | root | `matrix.sender`, `matrix.room_id`, `widget.prefs.roster_only` (the new value), `outcome`. Optional host feature. |
+| `widget.chat` | SERVER | root | `matrix.sender`, `matrix.room_id`, `call.remote.e164`, `widget.chat.created`, `widget.chat.pending`, `widget.contact.saved` (only when a name was sent), `outcome`. Optional host feature. |
+| `widget.contact` | SERVER | root | `matrix.sender`, `matrix.room_id`, `call.remote.e164`, `widget.contact.form` (room, number), `widget.contact.changed`, `outcome`. Optional host feature. |
 | `widget.openid.verify` | CLIENT | child-only (under `widget.session`) | `server.address` (the token's homeserver name), `outcome` (ok, openid_invalid, openid_error). The HTTP client span below it uses the fixed `url.template` `/_matrix/federation/v1/openid/userinfo`, so the token (a query parameter) never reaches a span. |
 | `bridge.widget.sweep` | INTERNAL | root (startup, disable) / linked root (login, linked to the caller's span) | `trigger` (startup, login, periodic, disable), `rooms.checked`, `rooms.installed`, `rooms.updated`, `rooms.failed`, `rooms.removed` (disable only). Periodic passes start a span **only** when they have rooms not yet done. |
 
@@ -544,7 +550,7 @@ codes and tokens are refused before the device store is queried.
 | `bridge.widget.device_janitor` | INTERNAL | root, recorded **only** when it redacted or purged something | `devices.purged`, `notices.redacted`, `notices.failed` |
 | `cmd.dialpad_link`, `cmd.dialpad_links`, `cmd.dialpad_revoke` | CONSUMER | root (`WithSpan`) | `cmd.name`; `Issue`/`Revoke` add span events `dialpad.link.issue` / `dialpad.link.revoke` with `widget.device.id` and `outcome` (ok, not_private, limit, not_found, error), never the name or code |
 
-`widget.call`, `widget.dtmf` and `widget.hangup` carry `widget.client` (widget, pwa); for PWA sessions
+`widget.call`, `widget.dtmf`, `widget.hangup`, `widget.prefs`, `widget.chat` and `widget.contact` carry `widget.client` (widget, pwa); for PWA sessions
 they have `widget.device.id` instead of `matrix.room_id`. `GET state` from the PWA stays span-free.
 
 Privacy (in addition to §6): OpenID tokens, session tokens, the per-room widget key `k`, the widget
@@ -567,6 +573,8 @@ span.
 - Matrix OpenID tokens, LiveKit JWTs, AS/HS tokens, double-puppet tokens, any `Bearer` value.
 - OTLP header values (L4), full URLs (only `scheme://host` and templated paths).
 - Matrix event content (call.member bodies may hold LiveKit service URLs and device keys).
+- Contact names (and previous names) typed in the widget or given to `save-contact`: not on spans, logs
+  or metrics. The number is allowed on spans and logs.
 
 ### 6.2 Allowed
 

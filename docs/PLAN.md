@@ -14,6 +14,9 @@ first. Update the checkboxes and the "Current state" section as work lands, so t
 - Element X is affected by an upstream Element Call pickup bug for outbound calls; use `!sip call`
   there. Sable and other clients can press the call button in a number's room.
 - The jabber-side embedding lives on a `local/sip-calls` branch of mautrix-jabber that is not published.
+- v0.2.0: the Dialpad widget and PWA gain optional host features (`Deps.Features`, `pkg/hostkit/contacts.go`,
+  WIDGET-SPEC §7.5): roster-only toggle, Message, Name / Save contact and a "Saved as" line. Only
+  mautrix-jabber offers them; the standalone bridge is unchanged.
 - Next: Phase 4 (robustness).
 
 ## Goal

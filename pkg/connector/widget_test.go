@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
@@ -195,5 +196,13 @@ func TestDialpadAdapterBeforeStart(t *testing.T) {
 	c := &SIPConnector{}
 	if c.pwaEnabled() {
 		t.Error("pwa enabled by default")
+	}
+}
+
+// The standalone host has no optional features: the widget shows none of those controls.
+func TestWidgetDepsHaveNoFeatures(t *testing.T) {
+	c := &SIPConnector{br: &bridgev2.Bridge{Log: zerolog.Nop()}}
+	if d := c.widgetDeps(); d.Features != nil {
+		t.Errorf("standalone widgetDeps().Features = %v, want nil", d.Features)
 	}
 }

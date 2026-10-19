@@ -49,6 +49,11 @@
       <p id="sheet-install-hint" class="hint" hidden></p>
       <button id="install" class="btn" type="button" hidden>Install app</button>
       <label class="check"><input id="recent-toggle" type="checkbox" checked> <span>Remember recent numbers</span></label>
+      <div id="roster-only-wrap" hidden>
+        <label class="check"><input id="roster-only" type="checkbox"> <span>Only ring for contacts</span></label>
+        <p class="hint">Calls from numbers not in your contacts go to voicemail.</p>
+        <p id="roster-only-warn" class="status err" role="alert" hidden></p>
+      </div>
       <p class="hint">Recent numbers stay on this phone. Anyone who can unlock it can see them.</p>
       <button id="recent-clear" class="btn" type="button">Clear recent numbers</button>
       <button id="forget" class="btn danger" type="button">Forget this device</button>
@@ -71,7 +76,15 @@
         <button id="backspace" class="btn" type="button" aria-label="Delete last character">&#9003;</button>
       </div>
       <p id="preview" class="preview" aria-live="polite"></p>
-      <button id="call-number" class="btn primary" type="button" disabled>Call</button>
+      <div id="name-wrap" hidden>
+        <label for="contact-name">Name (optional)</label>
+        <input id="contact-name" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="Save this number as...">
+      </div>
+      <div class="row">
+        <button id="call-number" class="btn primary" type="button" disabled>Call</button>
+        <button id="message-number" class="btn" type="button" hidden disabled>Message</button>
+      </div>
+      <button id="save-number" class="btn link" type="button" hidden disabled>Save contact</button>
       <p id="explainer" class="hint">Calls ring in your Matrix app (Element X, Sable). Answer there; this app only dials and controls the call.</p>
     </section>
 
@@ -82,6 +95,8 @@
       <div id="keypad-extra" class="keypad extra" role="group" aria-label="Extra keys A to D" hidden></div>
     </section>
 
+    <p id="result" class="preview" role="status" aria-live="polite" hidden></p>
+    <a id="open-chat" class="btn secondary" href="#" target="_blank" rel="noopener noreferrer" hidden>Open in Matrix</a>
     <a id="open-room" class="btn secondary" href="#" target="_blank" rel="noopener noreferrer" hidden>Open in Matrix</a>
     <button id="hangup" class="btn danger" type="button" hidden>Hang up</button>
 

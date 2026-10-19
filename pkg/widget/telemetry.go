@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
+	"github.com/williamkray/mrtc-sip-bridge/pkg/hostkit"
 	"github.com/williamkray/mrtc-sip-bridge/pkg/obs"
 )
 
@@ -18,6 +19,9 @@ const (
 	spanCall    = "widget.call"          // SERVER, root
 	spanDTMF    = "widget.dtmf"          // SERVER, root
 	spanHangup  = "widget.hangup"        // SERVER, root
+	spanPrefs   = "widget.prefs"         // SERVER, root
+	spanChat    = "widget.chat"          // SERVER, root
+	spanContact = "widget.contact"       // SERVER, root
 	spanVerify  = "widget.openid.verify" // CLIENT, child-only under widget.session
 	spanSweep   = "bridge.widget.sweep"  // INTERNAL, root / linked root
 
@@ -62,24 +66,30 @@ const (
 
 // Attribute keys used only by this package (TELEMETRY-SPEC §5.12, §4.3). obs.AttrOutcome is "outcome".
 const (
-	attrRoomKind      = attribute.Key("widget.room.kind") // span: portal, management
-	attrCallForm      = attribute.Key("widget.call.form") // span: room, number
-	attrAction        = attribute.Key("widget.action")    // metric: session, state, normalize, call, dtmf, hangup
-	attrTrigger       = attribute.Key("trigger")          // span: startup, login, periodic, disable
-	attrRoomsChecked  = attribute.Key("rooms.checked")    // span
-	attrRoomsInstall  = attribute.Key("rooms.installed")  // span
-	attrRoomsUpdated  = attribute.Key("rooms.updated")    // span
-	attrRoomsFailed   = attribute.Key("rooms.failed")     // span
-	attrRoomsRemoved  = attribute.Key("rooms.removed")    // span (disable sweep)
-	metricRequests    = "mrtcsip.widget.requests"
-	metricSessions    = "mrtcsip.widget.sessions"
-	metricInstalls    = "mrtcsip.widget.installs"
-	outcomeOK         = "ok"
-	outcomeInstalled  = "installed"
-	outcomeUpdated    = "updated"
-	outcomeUnchanged  = "unchanged"
-	outcomeRemoved    = "removed"
-	outcomeInstallErr = "failed"
+	attrRoomKind        = attribute.Key("widget.room.kind")         // span: portal, management
+	attrCallForm        = attribute.Key("widget.call.form")         // span: room, number
+	attrAction          = attribute.Key("widget.action")            // metric: session, state, normalize, call, dtmf, hangup, prefs, chat, contact
+	attrChatCreated     = attribute.Key("widget.chat.created")      // span: bool
+	attrChatPending     = attribute.Key("widget.chat.pending")      // span: bool
+	attrContactSaved    = attribute.Key("widget.contact.saved")     // span: bool (a name was given)
+	attrContactChanged  = attribute.Key("widget.contact.changed")   // span: bool
+	attrContactForm     = attribute.Key("widget.contact.form")      // span: room, number
+	attrPrefsRosterOnly = attribute.Key("widget.prefs.roster_only") // span: bool, the new value
+	attrTrigger         = attribute.Key("trigger")                  // span: startup, login, periodic, disable
+	attrRoomsChecked    = attribute.Key("rooms.checked")            // span
+	attrRoomsInstall    = attribute.Key("rooms.installed")          // span
+	attrRoomsUpdated    = attribute.Key("rooms.updated")            // span
+	attrRoomsFailed     = attribute.Key("rooms.failed")             // span
+	attrRoomsRemoved    = attribute.Key("rooms.removed")            // span (disable sweep)
+	metricRequests      = "mrtcsip.widget.requests"
+	metricSessions      = "mrtcsip.widget.sessions"
+	metricInstalls      = "mrtcsip.widget.installs"
+	outcomeOK           = "ok"
+	outcomeInstalled    = "installed"
+	outcomeUpdated      = "updated"
+	outcomeUnchanged    = "unchanged"
+	outcomeRemoved      = "removed"
+	outcomeInstallErr   = "failed"
 )
 
 // Metric outcomes of mrtcsip.widget.requests (closed enum).
@@ -110,7 +120,7 @@ func metricOutcome(code string) string {
 		return mRateLimited
 	case "line_busy", "dtmf_busy":
 		return mBusy
-	case codeNotReady, "outbound_disabled":
+	case codeNotReady, "outbound_disabled", hostkit.CodeUnavailable:
 		return mNotReady
 	case codeInternal:
 		return mError

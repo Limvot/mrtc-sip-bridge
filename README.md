@@ -98,6 +98,15 @@ type or paste a number (normalised like `call`, same number policy), a call butt
 hang-up button. It dials through the same call core as `!sip call`, so your devices ring from the number's
 ghost and you answer to start the call.
 
+- **Contacts, Message and roster-only (embedded in mautrix-jabber only):** when the host supports them
+  (mautrix-jabber v0.3.0 and later), the Dialpad also has an optional **Name** field, a **Message** button
+  (opens the number's text chat, with an "Open chat" link), **Save contact** (saves the number to your
+  Jabber roster; in a number room it shows "Saved as ..." and can rename it) and an **Only ring for
+  contacts** checkbox (inbound calls from numbers outside your roster go to voicemail). A name typed
+  with Call saves the contact before the call. These controls appear only when the host offers them: the
+  standalone bridge shows none of them. The widget never logs or traces contact names (the host's own
+  roster logging may). See
+  [docs/WIDGET-SPEC.md](docs/WIDGET-SPEC.md) §7.5 for the host interfaces.
 - **Supported clients:** Sable and gomuks (both show room widgets and answer the widget's OpenID
   request). **Element X does not show widgets**: use `call`, `dtmf` and `hangup` there.
 - **Who can use it:** only the owner of the login the room belongs to. The widget URL carries a per-room
@@ -478,9 +487,12 @@ Phase 1, 2 and 3 coverage:
 - **Commands:** `cmd.call`, `cmd.dtmf` and `cmd.hangup` are root spans with `cmd.name` only; `cmd.dtmf`
   adds `dtmf.digit_count` (the number of digits, never the digits).
 - **Dialpad widget:** `widget.session` (the OpenID session exchange; child `widget.openid.verify`, with
-  the userinfo HTTP call under it), `widget.call`, `widget.dtmf` and `widget.hangup` are root spans for the
+  the userinfo HTTP call under it), `widget.call`, `widget.dtmf`, `widget.hangup` and (when the host offers
+  them) `widget.prefs`, `widget.chat` and `widget.contact` are root spans for the
   matching API requests (`outcome`, `matrix.room_id`, `matrix.sender`; `widget.call` adds the dialled
-  `call.remote.e164` and `widget.call.form`, and `call.outbound` links to it; `widget.dtmf` records only
+  `call.remote.e164`, `widget.call.form` and, when a name was sent, `widget.contact.saved`, and
+  `call.outbound` links to it; `widget.chat` and `widget.contact` add `call.remote.e164` and result flags,
+  never the contact name; `widget.dtmf` records only
   `dtmf.digit_count`). `bridge.widget.sweep` covers an installer sweep (`trigger`, `rooms.checked`,
   `rooms.installed`, `rooms.updated`, `rooms.failed`); a periodic pass only gets a span when it found rooms
   it had not seen. State polling, number normalisation and static files get no spans, only metrics. Widget
@@ -531,7 +543,7 @@ received (`2xx` for answered, `none` if no INVITE was sent).
 | Metric | Type | Attributes | Meaning |
 |--------|------|------------|---------|
 | `mrtcsip.dtmf.sent` | counter, `{digit}` | `dtmf.method` (`rfc4733`) | DTMF digits sent to the SIP side (counts only, never the digits). |
-| `mrtcsip.widget.requests` | counter, `{request}` | `widget.action` (session, state, normalize, call, dtmf, hangup; app: enroll, device_session, device_confirm, forget), `outcome` (ok, unauthorized, forbidden, rate_limited, invalid, busy, not_ready, error; app: expired, used, reuse), `widget.client` (widget, pwa) | Dialpad widget and app API requests. |
+| `mrtcsip.widget.requests` | counter, `{request}` | `widget.action` (session, state, normalize, call, dtmf, hangup, prefs, chat, contact; app: enroll, device_session, device_confirm, forget), `outcome` (ok, unauthorized, forbidden, rate_limited, invalid, busy, not_ready, error; app: expired, used, reuse), `widget.client` (widget, pwa) | Dialpad widget and app API requests. |
 | `mrtcsip.widget.sessions` | gauge, `{session}` | none | Active widget sessions. |
 | `mrtcsip.widget.installs` | counter, `{room}` | `outcome` (installed, updated, unchanged, removed, failed) | Widget installer result per room. |
 | `mrtcsip.widget.device_links` | gauge, `{link}` | `state` (pending, active) | Dialpad app links, from the store's cached counts (refreshed by the janitor). |

@@ -118,6 +118,26 @@ func CheckNumberAction(api CallAPI, login core.LoginRef, number, defaultCC strin
 	return Result{OK: true, Number: e164}
 }
 
+// CheckChatNumberAction normalizes number for texting/saving: phone.Normalize with defaultCC, then
+// CheckDestination, where only ErrInvalidNumber fails (ErrNotAllowed and ErrSelfDial are call policy).
+// Short codes fail with CodeInvalidNumber and a hint to use the pm command. On success Number is E.164.
+func CheckChatNumberAction(api CallAPI, login core.LoginRef, number, defaultCC string) Result {
+	e164, err := phone.Normalize(number, defaultCC)
+	if err != nil {
+		if errors.Is(err, phone.ErrShortCode) {
+			return Result{Code: CodeInvalidNumber,
+				Message: "Short codes can't be texted from the Dialpad. Use `$cmdprefix pm <code>`."}
+		}
+		return placeErrResult(calls.ErrInvalidNumber)
+	}
+	if err = api.CheckDestination(login, e164); err != nil && errors.Is(err, calls.ErrInvalidNumber) {
+		r := placeErrResult(err)
+		r.Number = e164
+		return r
+	}
+	return Result{OK: true, Number: e164}
+}
+
 // placeErrResult maps a PlaceCall/CheckDestination error to a failed Result.
 func placeErrResult(err error) Result {
 	r := Result{Message: placeErrReply(err)}

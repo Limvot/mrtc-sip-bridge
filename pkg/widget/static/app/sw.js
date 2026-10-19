@@ -2,7 +2,7 @@
 // Minimal service worker: caches the static app shell only. API calls (the bridge endpoints) and every non-GET
 // request are never intercepted, so responses from the bridge are never cached.
 // Bump VERSION whenever any shell file changes.
-var VERSION = '099333cfd32d';
+var VERSION = 'd581e44ffd03';
 var SHELL = ['./', 'app.js', 'app.css', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 // Caches are per scope: several bridges (or paths) on one origin each get their own prefix and only ever

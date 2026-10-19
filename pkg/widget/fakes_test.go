@@ -109,9 +109,11 @@ type fakeCalls struct {
 	dtmfRoom []id.RoomID
 	dtmfErr  error
 	snap     *calls.Snapshot
+	order    *orderLog // optional: records "place" in sequence with fakeFeatures
 }
 
 func (f *fakeCalls) PlaceCall(_ context.Context, _ core.LoginRef, req calls.PlaceCallRequest) (string, string, error) {
+	f.order.add("place")
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.placeErr != nil {
@@ -414,3 +416,119 @@ func decode(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 }
 
 var errBoom = errors.New("boom")
+
+// orderLog records the order of host calls across fakes (nil-safe).
+type orderLog struct {
+	mu sync.Mutex
+	l  []string
+}
+
+func (o *orderLog) add(s string) {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	o.l = append(o.l, s)
+	o.mu.Unlock()
+}
+
+func (o *orderLog) get() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string(nil), o.l...)
+}
+
+// fakeFeatures implements all four optional host interfaces.
+type fakeFeatures struct {
+	order *orderLog
+
+	mu        sync.Mutex
+	on        bool
+	warning   string
+	setErr    error
+	saveErr   error
+	saveDelay time.Duration
+	saved     []string // "<e164>|<name>"
+	prev      string
+	unchanged bool
+	openErr   error
+	openDelay time.Duration
+	openRoom  hostkit.ChatRoom
+	opened    []string
+	cName     string
+	cSaved    bool
+}
+
+func (f *fakeFeatures) RosterOnly(*bridgev2.UserLogin) hostkit.RosterOnlyState {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return hostkit.RosterOnlyState{On: f.on, Warning: f.warning}
+}
+
+func (f *fakeFeatures) SetRosterOnly(_ context.Context, _ *bridgev2.UserLogin, on bool) (hostkit.RosterOnlyState, error) {
+	f.order.add("prefs")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.setErr != nil {
+		return hostkit.RosterOnlyState{}, f.setErr
+	}
+	f.on = on
+	return hostkit.RosterOnlyState{On: on, Warning: f.warning}, nil
+}
+
+func (f *fakeFeatures) OpenChat(ctx context.Context, _ *bridgev2.UserLogin, e164 string) (hostkit.ChatRoom, error) {
+	f.order.add("open")
+	f.mu.Lock()
+	f.opened = append(f.opened, e164)
+	delay, err, room := f.openDelay, f.openErr, f.openRoom
+	f.mu.Unlock()
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return hostkit.ChatRoom{}, ctx.Err()
+		}
+	}
+	return room, err
+}
+
+func (f *fakeFeatures) SaveContact(ctx context.Context, _ *bridgev2.UserLogin, e164, name string) (hostkit.SavedContact, error) {
+	f.order.add("save")
+	f.mu.Lock()
+	f.saved = append(f.saved, e164+"|"+name)
+	delay, err, prev, unch := f.saveDelay, f.saveErr, f.prev, f.unchanged
+	f.mu.Unlock()
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return hostkit.SavedContact{}, ctx.Err()
+		}
+	}
+	if err != nil {
+		return hostkit.SavedContact{}, err
+	}
+	return hostkit.SavedContact{Name: name, PreviousName: prev, Changed: !unch}, nil
+}
+
+func (f *fakeFeatures) ContactName(*bridgev2.UserLogin, string) (string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.cName, f.cSaved
+}
+
+// prefsOnly implements only hostkit.RosterOnlyPrefs.
+type prefsOnly struct{}
+
+func (prefsOnly) RosterOnly(*bridgev2.UserLogin) hostkit.RosterOnlyState {
+	return hostkit.RosterOnlyState{On: true}
+}
+
+func (prefsOnly) SetRosterOnly(_ context.Context, _ *bridgev2.UserLogin, on bool) (hostkit.RosterOnlyState, error) {
+	return hostkit.RosterOnlyState{On: on}, nil
+}
+
+// withFeatures sets Deps.Features and shares the order log with the call fake.
+func withFeatures(f any) func(*hostkit.WidgetConfig, *Deps) {
+	return func(_ *hostkit.WidgetConfig, d *Deps) { d.Features = f }
+}

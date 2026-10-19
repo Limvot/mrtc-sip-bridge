@@ -20,7 +20,8 @@
 
   var S = { dev: null, session: '', sessionExp: 0, login: { ready: true, message: '' }, call: null,
             busyUntil: 0, hidden: document.hidden, errMsg: '', failures: 0, numberOK: false,
-            e164: '', pollTimer: 0, renewTimer: 0, active: false, offline: false, saveFailed: false };
+            e164: '', pollTimer: 0, renewTimer: 0, active: false, offline: false, saveFailed: false,
+            features: {}, prefs: null, chatOK: false, actBusy: false, prefBusy: false };
   var pendingCode = ''; // enrolment code, memory only
   var deferredInstall = null;
 
@@ -322,6 +323,8 @@
       var b = r.body;
       S.login = b.login || { ready: true, message: '' };
       S.call = b.call || null;
+      S.features = b.features || {};
+      S.prefs = b.prefs || null;
       render();
     }, function (e) {
       if (!S.active) return;
@@ -338,7 +341,21 @@
     else setStatus('Ready');
 
     show('dialbox', !inCall && ready);
-    $('call-number').disabled = !S.numberOK || inCall || !ready;
+    $('call-number').disabled = !S.numberOK || inCall || !ready || S.actBusy;
+    // Optional host features (state.features; absent = hidden). Input values are never written here.
+    var canIdle = !inCall && ready;
+    show('name-wrap', canIdle && !!S.features.save_contact);
+    show('message-number', canIdle && !!S.features.chat);
+    $('message-number').disabled = !(S.chatOK && !S.actBusy);
+    show('save-number', canIdle && !!S.features.save_contact);
+    $('save-number').disabled = !(S.chatOK && nameVal() !== '' && !S.actBusy);
+    show('roster-only-wrap', ready && !!S.features.roster_only && !!S.prefs);
+    if (S.prefs) {
+      if (!S.prefBusy) $('roster-only').checked = !!S.prefs.roster_only;
+      $('roster-only').disabled = S.prefBusy;
+      $('roster-only-warn').textContent = S.prefs.warning || '';
+      $('roster-only-warn').hidden = !S.prefs.warning;
+    }
     show('keypad-wrap', true);
     setKeysEnabled(inCall ? !!S.call.can_dtmf : ready);
     show('hangup', inCall);
@@ -405,7 +422,7 @@
       b.type = 'button'; b.className = 'btn'; b.textContent = n;
       b.addEventListener('click', function () {
         $('number').value = n; onNumberInput();
-        if (!S.call) doCall(n);
+        if (!S.call) doCall(n, true);
       });
       li.appendChild(b); ul.appendChild(li);
     });
@@ -413,17 +430,70 @@
   }
 
   // ---- Actions ----
-  function doCall(number) {
-    S.errMsg = '';
+  function nameVal() { return $('contact-name').value.trim(); }
+  function clearResult() {
+    $('result').hidden = true; $('result').textContent = '';
+    $('open-chat').hidden = true;
+  }
+  function showResult(text) {
+    if (!text) return;
+    $('result').textContent = text; $('result').hidden = false;
+  }
+  function beginAction() { S.errMsg = ''; S.actBusy = true; clearResult(); render(); }
+  function endAction(e) {
+    S.actBusy = false;
+    if (e) S.errMsg = failText(e);
+    return e ? render() : afterAction();
+  }
+  function doCall(number, fromRecent) {
+    var body = { number: number }, name = !fromRecent && S.features.save_contact ? nameVal() : '';
+    if (name) body.name = name;
+    beginAction();
     setStatus('Placing call...');
-    authed('POST', 'call', { number: number }).then(function (r) {
+    authed('POST', 'call', body).then(function (r) {
       if (r.status === 200 && r.body.ok !== false) {
         var n = typeof r.body.number === 'string' && /^\+\d+$/.test(r.body.number) ? r.body.number : (S.e164 || number);
         addRecent(n);
         if (r.body.message) setStatus(r.body.message);
+        var c = r.body.contact;
+        showResult(r.body.warning || (c && c.changed ? 'Saved as ' + c.name : ''));
       } else { S.errMsg = errText(r); }
-      return afterAction();
-    }, function (e) { S.errMsg = failText(e); render(); });
+      return endAction();
+    }, endAction);
+  }
+  function doMessage() {
+    var body = { number: $('number').value.trim() }, name = S.features.save_contact ? nameVal() : '';
+    if (name) body.name = name;
+    beginAction();
+    authed('POST', 'chat', body).then(function (r) {
+      if (r.status === 200 && r.body.ok !== false) {
+        showResult(r.body.message);
+        if (r.body.room_id) {
+          $('open-chat').href = 'https://matrix.to/#/' + encodeURIComponent(r.body.room_id);
+          $('open-chat').hidden = false;
+        }
+      } else { S.errMsg = errText(r); }
+      return endAction();
+    }, endAction);
+  }
+  function doSaveNumber() {
+    beginAction();
+    authed('POST', 'contact', { number: $('number').value.trim(), name: nameVal() }).then(function (r) {
+      if (r.status === 200 && r.body.ok !== false) showResult(r.body.message); else S.errMsg = errText(r);
+      return endAction();
+    }, endAction);
+  }
+  function doRosterOnly() {
+    var box = $('roster-only'), want = box.checked;
+    S.errMsg = ''; S.prefBusy = true; clearResult(); render();
+    authed('POST', 'prefs/roster_only', { on: want }).then(function (r) {
+      if (r.status === 200 && r.body.ok !== false) {
+        S.prefs = { roster_only: !!r.body.roster_only, warning: r.body.warning || '' };
+        showResult(r.body.message);
+      } else { box.checked = !want; S.errMsg = errText(r); }
+    }, function (e) { box.checked = !want; S.errMsg = failText(e); }).then(function () {
+      S.prefBusy = false; render();
+    });
   }
   function doHangup() {
     authed('POST', 'hangup', {}).then(function (r) {
@@ -467,7 +537,8 @@
   // ---- Number field with debounced server-side normalisation ----
   var normTimer = 0, normSeq = 0;
   function onNumberInput() {
-    S.numberOK = false; S.e164 = ''; $('call-number').disabled = true;
+    S.numberOK = false; S.chatOK = false; S.e164 = ''; $('call-number').disabled = true;
+    render();
     var v = $('number').value.trim();
     clearTimeout(normTimer);
     ++normSeq;
@@ -481,8 +552,10 @@
           S.numberOK = true; S.e164 = b.e164 || ''; $('preview').textContent = 'Will call ' + b.e164;
         } else {
           $('preview').textContent = (r.status === 200 && b.message) ? b.message : errText(r);
+          if (r.status === 200 && b.chat_ok) $('preview').textContent += ' You can still message it.';
         }
-        $('call-number').disabled = !S.numberOK || !!S.call;
+        S.chatOK = r.status === 200 && !!b.chat_ok;
+        render();
       }, function (e) { if (my === normSeq) $('preview').textContent = failText(e); });
     }, 300);
   }
@@ -562,7 +635,11 @@
   }
 
   // ---- Wiring ----
-  $('call-number').addEventListener('click', function () { if (S.numberOK) doCall($('number').value.trim()); });
+  $('call-number').addEventListener('click', function () { if (S.numberOK && !S.actBusy) doCall($('number').value.trim()); });
+  $('message-number').addEventListener('click', function () { if (S.chatOK && !S.actBusy) doMessage(); });
+  $('save-number').addEventListener('click', function () { if (S.chatOK && nameVal() && !S.actBusy) doSaveNumber(); });
+  $('contact-name').addEventListener('input', render);
+  $('roster-only').addEventListener('change', doRosterOnly);
   $('hangup').addEventListener('click', doHangup);
   $('number').addEventListener('input', onNumberInput);
   $('backspace').addEventListener('click', function () {
@@ -583,7 +660,7 @@
     if (!S.active || e.ctrlKey || e.metaKey || e.altKey) return;
     var t = e.target, inNum = t === $('number');
     if (e.key === 'Escape' && S.call) { e.preventDefault(); doHangup(); return; }
-    if (e.key === 'Enter' && inNum) { e.preventDefault(); if (S.numberOK && !S.call) doCall($('number').value.trim()); return; }
+    if (e.key === 'Enter' && inNum) { e.preventDefault(); if (S.numberOK && !S.call && !S.actBusy) doCall($('number').value.trim()); return; }
     if (S.call && S.call.can_dtmf && /^[0-9*#]$/.test(e.key) && t.tagName !== 'BUTTON') { e.preventDefault(); pressKey(e.key); }
   });
 

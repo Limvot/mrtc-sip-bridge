@@ -166,6 +166,8 @@ With the bridge's configured prefix (the dev service uses `!jc`):
 | `call [number]` | Ring your devices from the number's ghost; answer and the bridge dials. In a Cheogram 1:1 room the number is optional. |
 | `hangup` | End the active call. |
 | `dtmf <digits>` | Send keypad tones during a call; your command message is redacted and digits are never logged. |
+| `roster-only-calls on\|off\|status` | Ring for incoming calls only from numbers in your Jabber roster; other callers get a 480 (voicemail) and a notice in the management room. Gates SIP calls only: XEP-0353 call notices still appear. Off by default; the Dialpad widget has the same toggle. |
+| `save-contact <name>` | In a one-to-one chat: save the chat's contact (Cheogram number or JID) to your roster under `<name>`, replacing an existing name. Works in every jabber build; the widget's Name / Save contact use the same semantics. |
 
 Only Cheogram 1:1 rooms (`<E.164>@cheogram.com`) carry calls. Group MMS rooms, MUC rooms and non-Cheogram
 DMs never do. Number policy (country code, allowed prefixes, short codes, self-dial) is the standalone's.
@@ -207,7 +209,9 @@ public jabber build:
   Env resolution follows this repo's README "Tracing and metrics (OpenTelemetry)".
 - Core spans (`sip.*`, `call.*`, `rtc.*`, `matrixrtc.*`, `media.*`) appear under the jabber service.
 - New host spans: `bridge.sip_connect` and `bridge.sip_disconnect` (roots; the retry is a linked root),
-  `bridge.calls.pl_sweep` (linked root), `cmd.sip_login`, `cmd.sip_login.submit` (root consumer),
+  `bridge.calls.pl_sweep` (linked root), `bridge.calls.open_chat` (linked root, the widget's Message),
+  `bridge.calls.inbound_filtered` (roster-only rejection), `cmd.roster_only_calls`, `cmd.save_contact`,
+  `cmd.sip_login`, `cmd.sip_login.submit` (root consumer),
   `cmd.sip_logout`, `cmd.sip_status`, `cmd.call`, `cmd.hangup`, `cmd.dtmf`.
 - Log lines under spans carry `trace_id`/`span_id`/`dd.trace_id`/`dd.span_id` exactly once.
 - Matrix HTTP calls are traced (jabber's transport wrapper) but there are no Matrix HTTP metrics in
@@ -255,6 +259,33 @@ the commands; return `widget.KindDevice`, `Login` nil plus `Refusal` when not re
 late-bound `hostkit.CommandDeps.Dialpad` that delegates to `srv.DialpadLinks()` once the server exists
 (nil interface when the PWA is off). `Notify`, `Redact`, `DeviceOwner` and `CommandPrefix` have defaults.
 
+Optional features (WIDGET-SPEC §7.5): set `Deps.Features` to a value implementing any of these
+`pkg/hostkit` interfaces (type-asserted once in `widget.New`; nil = none, the UI hides the controls):
+
+    type RosterOnlyPrefs interface {
+        RosterOnly(ul *bridgev2.UserLogin) RosterOnlyState                                  // memory only, never blocks
+        SetRosterOnly(ctx context.Context, ul *bridgev2.UserLogin, on bool) (RosterOnlyState, error)
+    }
+    type ChatOpener interface {
+        OpenChat(ctx context.Context, ul *bridgev2.UserLogin, e164 string) (ChatRoom, error) // Pending past the deadline
+    }
+    type ContactSaver interface {
+        SaveContact(ctx context.Context, ul *bridgev2.UserLogin, e164, name string) (SavedContact, error)
+    }
+    type ContactLookup interface {
+        ContactName(ul *bridgev2.UserLogin, e164 string) (name string, saved bool)          // memory only, never blocks
+    }
+
+Rules: `RosterOnly` and `ContactName` run on every state poll, so they read memory only. Every method
+returns before its context ends. `OpenChat` runs no history backfill inline (start it afterwards in its
+own goroutine) and returns `ChatRoom{Pending: true}` when creation outlives the deadline. Failures the
+user should see are `hostkit.NewActionError(code, msg)` (`invalid_number`, `invalid_name`,
+`unavailable`; `$cmdprefix` is expanded in the message); anything else is reported as a generic
+internal error and logged scrubbed. Contact names must never be logged or traced.
+
 mautrix-jabber (local `sipcalls` build): `sipcalls_widget.go` implements this. A ready login is
 `commandLoginWithAccount`, portals are `isCallPortal` (Cheogram 1:1, never group MMS or MUC), and titles
-come from `cheogramE164`.
+come from `cheogramE164`. `sipcalls_widgetfeatures.go` implements the optional features: roster-only
+uses the login's cached call preferences and roster counters, Save contact is the `save-contact` roster
+set (an unchanged name sends nothing), and Message reuses `ResolveCallRoom` (the room is the same one
+`pm` creates, plus the widget) detached from the request, with the MAM backfill started afterwards.

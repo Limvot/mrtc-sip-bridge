@@ -27,6 +27,9 @@ const (
 	actCall      = "call"
 	actDTMF      = "dtmf"
 	actHangup    = "hangup"
+	actPrefs     = "prefs"   // path prefs/roster_only
+	actChat      = "chat"    // optional host feature (hostkit.ChatOpener)
+	actContact   = "contact" // optional host feature (hostkit.ContactSaver)
 
 	// Dialpad PWA endpoints: the path is api/v1/device/<x>, the metric action is actDev*.
 	actDevEnroll  = "enroll"
@@ -39,7 +42,8 @@ const (
 // validation results (invalid_number, not_allowed, self_dial, invalid_digits); 401 unauthorized;
 // 403 forbidden and login_required; 409 call-state results (line_busy, no_active_call, not_connected,
 // dtmf_unsupported, dtmf_busy); 413 body too large; 415 wrong content type; 429 rate_limited
-// (Retry-After); 503 not_ready and outbound_disabled; 500 internal.
+// (Retry-After); 503 not_ready, outbound_disabled and unavailable; 500 internal. The optional host
+// features add 400 invalid_name and 404 not_supported (the host lacks the feature).
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, action string) {
 	var method string
 	var fn func(http.ResponseWriter, *http.Request) (string, *apiError)
@@ -56,6 +60,12 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, action string)
 		method, fn = http.MethodPost, s.handleDTMF
 	case actHangup:
 		method, fn = http.MethodPost, s.handleHangup
+	case actChat:
+		method, fn = http.MethodPost, s.handleChat
+	case actContact:
+		method, fn = http.MethodPost, s.handleContact
+	case "prefs/roster_only":
+		action, method, fn = actPrefs, http.MethodPost, s.handlePrefs
 	case "device/enroll", "device/session", "device/confirm", "device/forget":
 		if !s.pwa {
 			writeErr(w, &apiError{Status: http.StatusNotFound, Code: codeBadRequest, Message: "Unknown endpoint."})
@@ -132,8 +142,15 @@ type sessionReq struct {
 }
 
 type roomView struct {
-	Kind   string `json:"kind"`
-	Number string `json:"number"`
+	Kind    string       `json:"kind"`
+	Number  string       `json:"number"`
+	Contact *contactInfo `json:"contact,omitempty"` // state only, portal rooms with ContactLookup
+}
+
+// contactInfo is the saved-contact status of a portal's number.
+type contactInfo struct {
+	Name  string `json:"name"`
+	Saved bool   `json:"saved"`
 }
 
 type sessionResp struct {
@@ -366,10 +383,24 @@ type loginView struct {
 	Message string `json:"message"`
 }
 
+// featuresView tells the UI which optional host features exist (all false unless the login is ready).
+type featuresView struct {
+	RosterOnly  bool `json:"roster_only"`
+	Chat        bool `json:"chat"`
+	SaveContact bool `json:"save_contact"`
+}
+
+type prefsView struct {
+	RosterOnly bool   `json:"roster_only"`
+	Warning    string `json:"warning"`
+}
+
 type stateResp struct {
-	Room  roomView  `json:"room"`
-	Login loginView `json:"login"`
-	Call  *CallView `json:"call"`
+	Room     roomView     `json:"room"`
+	Login    loginView    `json:"login"`
+	Call     *CallView    `json:"call"`
+	Features featuresView `json:"features"`
+	Prefs    *prefsView   `json:"prefs"` // null unless features.roster_only
 }
 
 // phaseOf maps an actor state to the UI phase enum.
@@ -440,6 +471,16 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) (string, *a
 		resp.Login = loginView{Message: e.Message}
 	default:
 		resp.Login = loginView{Ready: true}
+		resp.Features = featuresView{RosterOnly: s.feat.prefs != nil, Chat: s.feat.chat != nil, SaveContact: s.feat.saver != nil}
+		// The host methods below read memory only (hostkit contract): state is polled every 1-5 s.
+		if s.feat.prefs != nil {
+			st := s.feat.prefs.RosterOnly(a.rc.Login)
+			resp.Prefs = &prefsView{RosterOnly: st.On, Warning: s.expand(st.Warning)}
+		}
+		if s.feat.lookup != nil && a.ss.device == "" && a.rc.Kind == KindPortal && a.rc.Number != "" {
+			name, saved := s.feat.lookup.ContactName(a.rc.Login, a.rc.Number)
+			resp.Room.Contact = &contactInfo{Name: name, Saved: saved || name != ""}
+		}
 		if snap, ok := api.Snapshot(login); ok {
 			resp.Call = callView(snap, a.ss.room)
 		}
@@ -459,6 +500,9 @@ type normalizeResp struct {
 	E164    string `json:"e164"`
 	Error   string `json:"error,omitempty"`
 	Message string `json:"message,omitempty"`
+	// ChatOK: the number may be texted or saved although the call policy may refuse it. Present only
+	// when the host offers Message or Save contact.
+	ChatOK *bool `json:"chat_ok,omitempty"`
 }
 
 func (s *Server) handleNormalize(w http.ResponseWriter, r *http.Request) (string, *apiError) {
@@ -481,11 +525,16 @@ func (s *Server) handleNormalize(w http.ResponseWriter, r *http.Request) (string
 		req.Number = req.Number[:64]
 	}
 	res := hostkit.CheckNumberAction(api, login, req.Number, s.defaultCC)
+	var chatOK *bool
+	if s.feat.chat != nil || s.feat.saver != nil {
+		ok := res.OK || hostkit.CheckChatNumberAction(api, login, req.Number, s.defaultCC).OK
+		chatOK = &ok
+	}
 	if res.OK {
-		writeJSON(w, http.StatusOK, normalizeResp{OK: true, E164: res.Number, Message: "Will call " + res.Number})
+		writeJSON(w, http.StatusOK, normalizeResp{OK: true, E164: res.Number, Message: "Will call " + res.Number, ChatOK: chatOK})
 		return "", nil
 	}
-	writeJSON(w, http.StatusOK, normalizeResp{E164: res.Number, Error: res.Code, Message: res.Message})
+	writeJSON(w, http.StatusOK, normalizeResp{E164: res.Number, Error: res.Code, Message: res.Message, ChatOK: chatOK})
 	return res.Code, nil
 }
 
@@ -495,13 +544,16 @@ func (s *Server) handleNormalize(w http.ResponseWriter, r *http.Request) (string
 func resultErr(res hostkit.Result) *apiError {
 	st := http.StatusInternalServerError
 	switch res.Code {
-	case hostkit.CodeInvalidNumber, hostkit.CodeNotAllowed, hostkit.CodeSelfDial, hostkit.CodeInvalidDigits:
+	case hostkit.CodeInvalidNumber, hostkit.CodeNotAllowed, hostkit.CodeSelfDial, hostkit.CodeInvalidDigits,
+		hostkit.CodeInvalidName:
 		st = http.StatusBadRequest
 	case hostkit.CodeLineBusy, hostkit.CodeNoActiveCall, hostkit.CodeNotConnected, hostkit.CodeDTMFUnsupported,
 		hostkit.CodeDTMFBusy:
 		st = http.StatusConflict
-	case hostkit.CodeOutboundDisabled:
+	case hostkit.CodeOutboundDisabled, hostkit.CodeUnavailable:
 		st = http.StatusServiceUnavailable
+	case hostkit.CodeNotSupported:
+		st = http.StatusNotFound
 	}
 	code := res.Code
 	if code == "" {
@@ -550,13 +602,29 @@ func commandRoom(a *authed) id.RoomID {
 }
 
 type callResp struct {
-	OK      bool   `json:"ok"`
-	Number  string `json:"number"`
-	Message string `json:"message"`
+	OK      bool         `json:"ok"`
+	Number  string       `json:"number"`
+	Message string       `json:"message"`
+	Contact *contactView `json:"contact,omitempty"`
+	Warning string       `json:"warning,omitempty"`
+}
+
+// callReq is the call body: an optional number (else the portal room) and an optional contact name to
+// save before the call.
+type callReq struct {
+	Number string `json:"number"`
+	Name   string `json:"name"`
+}
+
+// contactView is the result of saving a contact name.
+type contactView struct {
+	Name         string `json:"name"`
+	PreviousName string `json:"previous_name"`
+	Changed      bool   `json:"changed"`
 }
 
 func (s *Server) handleCall(w http.ResponseWriter, r *http.Request) (string, *apiError) {
-	var req numberReq
+	var req callReq
 	if e := decodeJSON(w, r, &req); e != nil {
 		return "", e
 	}
@@ -596,6 +664,38 @@ func (s *Server) handleCall(w http.ResponseWriter, r *http.Request) (string, *ap
 		}
 		creq.Number = req.Number
 	}
+	var contact *contactView
+	warning := ""
+	if req.Name != "" {
+		name, ok := hostkit.CleanContactName(req.Name)
+		if !ok {
+			return fail(errInvalidName, "")
+		}
+		if s.feat.saver == nil {
+			return fail(errNotSupported, "")
+		}
+		// The call must be refused exactly as PlaceCall would refuse it, before anything is saved.
+		target := roomNumber
+		if form == "number" {
+			target = req.Number
+		}
+		chk := hostkit.CheckNumberAction(api, login, target, s.defaultCC)
+		if !chk.OK {
+			return fail(resultErr(chk), chk.Number)
+		}
+		sctx, cancel := budget(ctx, 4*time.Second)
+		sc, err := s.feat.saver.SaveContact(sctx, a.rc.Login, chk.Number, name)
+		cancel()
+		span.SetAttributes(attrContactSaved.Bool(err == nil))
+		if err != nil {
+			// Not fatal: a call is time-critical. Never log the name.
+			fe := s.featureErr(ctx, err)
+			warning = "Could not save the contact: " + fe.Message
+			s.logFor(ctx).Warn().Str("number", chk.Number).Str("code", fe.Code).Msg("Contact save before call failed")
+		} else {
+			contact = &contactView{Name: sc.Name, PreviousName: sc.PreviousName, Changed: sc.Changed}
+		}
+	}
 	// The call actor outlives the request: PlaceCall keeps only the span context, not ctx.
 	res := hostkit.PlaceCallAction(ctx, api, login, creq, roomNumber)
 	if res.Number != "" {
@@ -608,7 +708,7 @@ func (s *Server) handleCall(w http.ResponseWriter, r *http.Request) (string, *ap
 		return fail(resultErr(res), res.Number)
 	}
 	s.finish(ctx, span, actCall, a, "", res.Number)
-	writeJSON(w, http.StatusOK, callResp{OK: true, Number: res.Number, Message: res.Message})
+	writeJSON(w, http.StatusOK, callResp{OK: true, Number: res.Number, Message: res.Message, Contact: contact, Warning: warning})
 	return "", nil
 }
 
