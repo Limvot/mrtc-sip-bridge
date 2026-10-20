@@ -8,9 +8,9 @@ A Matrix ↔ SIP calling bridge. It registers to a SIP provider with ordinary SI
 - Each call leaves a "missed / answered / outgoing" notice in the room.
 
 First target is a [JMP.chat](https://jmp.chat) number's SIP account. Texting for JMP numbers is handled
-separately by [jmpchat-matrix-bridge](https://github.com/williamkray/jmpchat-matrix-bridge) (formerly mautrix-jabber) via Cheogram. A planned
-optional mode embeds this bridge's call core in jmpchat-matrix-bridge so a number's texts and calls share one
-room.
+separately by [jmpchat-matrix-bridge](https://github.com/williamkray/jmpchat-matrix-bridge) (formerly mautrix-jabber) via Cheogram. In
+[embedded mode](#embedded-mode-jmpchat-matrix-bridge) that bridge runs this call core itself, so a number's
+texts and calls share one room.
 
 **Status:** inbound calls, **outbound calls** and DTMF are implemented and validated against a live JMP
 account and a Synapse/LiveKit deployment. The bridge registers with SIP
