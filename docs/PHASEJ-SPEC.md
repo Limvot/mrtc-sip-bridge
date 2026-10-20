@@ -1,5 +1,7 @@
 # Phase J implementation spec: embedding the call core in mautrix-jabber
 
+> Note: the host bridge mautrix-jabber was renamed to jmpchat-matrix-bridge in 2026-10 (v0.6.0); this document keeps the old name.
+
 > **Status note (publication):** this spec describes the original private build. Since publication,
 > mautrix-jabber depends on the public module `github.com/williamkray/mrtc-sip-bridge` (no `replace`),
 > builds with the `sipcalls` tag in its default images, and is developed on its normal branches. D2,

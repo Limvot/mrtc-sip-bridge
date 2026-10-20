@@ -14,7 +14,7 @@ import (
 var ExampleYAML string
 
 // CopyKeys copies every Config key from the user's file into the upgrade base under path
-// (standalone: no path; jabber: "calls"). Every key is copied (mautrix-jabber lesson: keys that are not
+// (standalone: no path; jabber: "calls"). Every key is copied (jmpchat-matrix-bridge lesson: keys that are not
 // copied get reset to the example value on every start).
 func CopyKeys(h configupgrade.Helper, path ...string) {
 	at := func(keys ...string) []string {

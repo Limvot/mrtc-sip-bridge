@@ -1,5 +1,7 @@
 # Implementation plan
 
+> Note: the host bridge mautrix-jabber was renamed to jmpchat-matrix-bridge in 2026-10 (v0.6.0); this document keeps the old name.
+
 Status: **Phases 0-3 and J implemented and validated live; Phase 4 (robustness) next.** Read `DECISIONS.md` (why) and `RESEARCH.md` (facts and sources)
 first. Update the checkboxes and the "Current state" section as work lands, so the next agent can pick up.
 

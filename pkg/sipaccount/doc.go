@@ -1,5 +1,5 @@
 // Package sipaccount is the SIP account runtime shared by both hosts (the standalone bridge and the
-// embedded mautrix-jabber host): one process-wide Runtime (bind and external IP, STUN, RTP port range,
+// embedded jmpchat-matrix-bridge host): one process-wide Runtime (bind and external IP, STUN, RTP port range,
 // SIP port pool, registrations gauge) and one Account per login (UA start with port retry, stop with a
 // detached unregister, state, first-result wait, outbound dial), plus the stored Credentials and the
 // login form parsing.

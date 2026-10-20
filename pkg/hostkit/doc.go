@@ -1,5 +1,5 @@
 // Package hostkit is the bridgev2 glue shared by both hosts of the call core (the standalone bridge in
-// pkg/connector and the embedded mautrix-jabber host): the host config and its example YAML, the ghost
+// pkg/connector and the embedded jmpchat-matrix-bridge host): the host config and its example YAML, the ghost
 // intent adapter, room helpers (encryption check, owner read receipt, call power levels), the call
 // stack construction, the call bot commands, command spans, field prompts and the MatrixRTC login
 // resolver.

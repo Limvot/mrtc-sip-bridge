@@ -1,7 +1,7 @@
 # Dialpad widget spec (ADR-008 option 1)
 
 Status: **design, not implemented** (2026-10-17, branch `widget-dialpad`). Implements ADR-008 option 1
-("Matrix widget") for both hosts: the standalone bridge and the embedded mautrix-jabber host (Phase J,
+("Matrix widget") for both hosts: the standalone bridge and the embedded jmpchat-matrix-bridge (formerly mautrix-jabber) host (Phase J,
 local branch `local/sip-calls`, never pushed).
 
 Goal: a "Dialpad" room widget in every 1:1 number portal and in the bridge bot's management room. In

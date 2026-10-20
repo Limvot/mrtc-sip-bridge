@@ -11,7 +11,7 @@ the sibling project `../mautrix-jabber` (Cheogram).
 
 ## Status
 
-Phases 1 (skeleton), 2 (inbound calls), 3 (outbound calls, DTMF) and J (embedding in mautrix-jabber,
+Phases 1 (skeleton), 2 (inbound calls), 3 (outbound calls, DTMF) and J (embedding in jmpchat-matrix-bridge (formerly mautrix-jabber),
 `docs/PHASEJ-SPEC.md`) are implemented and were validated against a live JMP account and a
 Synapse/LiveKit deployment. Host contract: `docs/EMBEDDING.md`.
 See the **Current state** section of `docs/PLAN.md`. Start here:
@@ -28,7 +28,7 @@ See the **Current state** section of `docs/PLAN.md`. Start here:
    copying any outside code**. Element Call is AGPL and mumabridge has no license: don't copy either.
 
 The call core is a **library with two hosts** (ADR-006): this repo's standalone bridgev2 bridge, and an
-optional embedded mode inside mautrix-jabber (unified text and call rooms). Keep `pkg/` core packages
+optional embedded mode inside jmpchat-matrix-bridge (unified text and call rooms). Keep `pkg/` core packages
 free of host-specific imports.
 
 
@@ -67,7 +67,7 @@ packages, split per ADR-006:
 - **`pkg/telemetry/`** (host, SDK): `Init`/`Shutdown`, env resolution for both signals, resource, OTLP
   exporters, temporality, error handler, logr sink, `WrapMatrixTransport`, Go runtime metrics. Only the
   standalone host (`cmd/mrtc-sip-bridge`) uses it, and it calls `obs.Use`. The embedded host
-  (mautrix-jabber `sipcalls` build) also goes through `telemetry.Init` with `Options.ServiceName`.
+  (jmpchat-matrix-bridge `sipcalls` build) also goes through `telemetry.Init` with `Options.ServiceName`.
 
 Rules:
 

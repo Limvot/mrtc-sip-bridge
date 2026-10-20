@@ -122,7 +122,7 @@ func (e *ActionError) Error() string { return e.Code + ": " + e.Message }
 // NewActionError returns an *ActionError.
 func NewActionError(code, msg string) error { return &ActionError{Code: code, Message: msg} }
 
-// MaxContactNameRunes bounds contact names (same limit as mautrix-jabber's save-contact).
+// MaxContactNameRunes bounds contact names (same limit as jmpchat-matrix-bridge's save-contact).
 const MaxContactNameRunes = 64
 
 // CleanContactName trims s and checks it is a usable contact name: 1..MaxContactNameRunes runes, valid

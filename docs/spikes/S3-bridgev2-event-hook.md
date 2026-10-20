@@ -1,5 +1,7 @@
 # S3: receiving non-routed Matrix events in a bridgev2 bridge
 
+> Note: the host bridge mautrix-jabber was renamed to jmpchat-matrix-bridge in 2026-10 (v0.6.0); this document keeps the old name.
+
 Checked against maunium.net/go/mautrix v0.32.0 (`~/go/pkg/mod/maunium.net/go/mautrix@v0.32.0`, paths below relative to it).
 Result: **works**. Register extra handlers on `*matrix.Connector.EventProcessor`. No fork needed.
 

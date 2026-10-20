@@ -5,7 +5,7 @@ files. Re-check when adding a dependency or borrowing code. This project's own l
 copyright William Kray). Dependency licenses remain as listed below, and a summary is in
 `THIRD-PARTY-NOTICES.md` (also shipped in the Docker image). MPL-2.0 dependencies (mautrix, go.mau.fi/util,
 diago) are used unmodified and linked only. Every dependency below is compatible with MIT distribution and
-with being imported by mautrix-jabber (ADR-006).
+with being imported by jmpchat-matrix-bridge (formerly mautrix-jabber) (ADR-006).
 
 ## Planned dependencies
 
@@ -21,10 +21,10 @@ with being imported by mautrix-jabber (ADR-006).
 | [libopus (xiph/opus)](https://github.com/xiph/opus) | BSD-3-Clause (Xiph COPYING; GitHub shows NOASSERTION) | Opus codec, linked via cgo | Keep the copyright notice in binary distributions/images. |
 | [pion/sdp](https://github.com/pion/sdp), [pion/rtp](https://github.com/pion/rtp) | MIT | SDP (indirect); RTP packets (`pion/rtp` v1.10.2, direct import of `pkg/rtc`) | Keep the notice. |
 | [pion/stun](https://github.com/pion/stun) | MIT | STUN public-IP discovery (Spike S2 uses v3.1.7) | Keep the notice. |
-| [rs/zerolog](https://github.com/rs/zerolog) | MIT | Structured logging (pkg/core, same version as mautrix-jabber: v1.35.1) | Keep the notice. |
-| [go.mau.fi/util](https://github.com/mautrix/go-util) | MPL-2.0 | Shared utilities used by the bridge (v0.11.0, same as mautrix-jabber) | Same as mautrix. |
+| [rs/zerolog](https://github.com/rs/zerolog) | MIT | Structured logging (pkg/core, same version as jmpchat-matrix-bridge: v1.35.1) | Keep the notice. |
+| [go.mau.fi/util](https://github.com/mautrix/go-util) | MPL-2.0 | Shared utilities used by the bridge (v0.11.0, same as jmpchat-matrix-bridge) | Same as mautrix. |
 | [gopkg.in/yaml.v3](https://github.com/go-yaml/yaml) | MIT and Apache-2.0 | YAML (config handling and tests; v3.0.1) | Keep the notices. |
-| [open-telemetry/opentelemetry-go](https://github.com/open-telemetry/opentelemetry-go) | Apache-2.0 | OpenTelemetry v1.47.0 (same version as mautrix-jabber): API modules `otel`, `attribute`, `codes`, `trace`, `metric`, `propagation` in core `pkg/obs`; `sdk`, `sdk/metric` and the OTLP exporters (`otlptrace`, `otlptracegrpc`, `otlptracehttp`, `otlpmetricgrpc`, `otlpmetrichttp`) in the host `pkg/telemetry` only | Keep NOTICE/attribution. No source copied. |
+| [open-telemetry/opentelemetry-go](https://github.com/open-telemetry/opentelemetry-go) | Apache-2.0 | OpenTelemetry v1.47.0 (same version as jmpchat-matrix-bridge): API modules `otel`, `attribute`, `codes`, `trace`, `metric`, `propagation` in core `pkg/obs`; `sdk`, `sdk/metric` and the OTLP exporters (`otlptrace`, `otlptracegrpc`, `otlptracehttp`, `otlpmetricgrpc`, `otlpmetrichttp`) in the host `pkg/telemetry` only | Keep NOTICE/attribution. No source copied. |
 | [open-telemetry/opentelemetry-go-contrib](https://github.com/open-telemetry/opentelemetry-go-contrib) | Apache-2.0 | `instrumentation/runtime` v0.72.0: Go runtime metrics, standalone host only | Same. |
 | [open-telemetry/opentelemetry-proto-go](https://github.com/open-telemetry/opentelemetry-proto-go) | Apache-2.0 | `go.opentelemetry.io/proto/otlp`, indirect (OTLP exporters) | Same. |
 | [go-logr/logr](https://github.com/go-logr/logr), [go-logr/stdr](https://github.com/go-logr/stdr) | Apache-2.0 | `otel.SetLogger` sink in `pkg/telemetry` (logr v1.4.4); stdr indirect | Same. |
@@ -56,4 +56,4 @@ Docker image under `/usr/share/doc/mrtc-sip-bridge/`.
 - battlepenguin, ["Moving my phone numbers from Google Hangouts/Voice to an SIP/XMPP Service"](https://battlepenguin.com/tech/moving-my-phone-number-from-google-hangouts-voice-to-an-sip-xmpp-service/) (2021): JMP multi-registration behaviour and SIP minute limit.
 - [LiveKit telephony docs](https://docs.livekit.io/telephony/): LiveKit SIP does not support REGISTER.
 - [element-call issue #3933](https://github.com/element-hq/element-call/issues/3933): `MISSING_MATRIX_RTC_TRANSPORT` pitfall.
-- Sibling project [mautrix-jabber](https://github.com/williamkray/mautrix-jabber) (same author): phone normalisation and telemetry conventions get reimplemented here.
+- Sibling project [jmpchat-matrix-bridge](https://github.com/williamkray/jmpchat-matrix-bridge) (same author): phone normalisation and telemetry conventions get reimplemented here.

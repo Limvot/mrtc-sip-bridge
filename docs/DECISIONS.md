@@ -1,5 +1,7 @@
 # Architecture decisions
 
+> Note: the host bridge mautrix-jabber was renamed to jmpchat-matrix-bridge in 2026-10 (v0.6.0); this document keeps the old name.
+
 Short ADR-style records. Each one says what was decided, why, and what would change the decision.
 Add new entries at the bottom. Don't rewrite old ones; mark them superseded instead.
 

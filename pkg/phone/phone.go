@@ -1,5 +1,5 @@
 // Package phone normalizes phone numbers to E.164. It is a reimplementation, with fixes, of the
-// Cheogram number handling in mautrix-jabber (cheogram.go).
+// Cheogram number handling in jmpchat-matrix-bridge (cheogram.go).
 package phone
 
 import (

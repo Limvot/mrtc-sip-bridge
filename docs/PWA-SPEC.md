@@ -1,7 +1,7 @@
 # Dialpad PWA spec (installable quick-call app)
 
 Status: **design, not implemented** (2026-10-17, branch `widget-dialpad`). Extends the Dialpad widget
-(`docs/WIDGET-SPEC.md`, ADR-012) for both hosts: the standalone bridge and the embedded mautrix-jabber
+(`docs/WIDGET-SPEC.md`, ADR-012) for both hosts: the standalone bridge and the embedded jmpchat-matrix-bridge (formerly mautrix-jabber)
 host (local branch `local/sip-calls`, never pushed). Proposed ADR text: §14.
 
 Goal: the user gets a special link from the bridge bot, opens it on their phone and installs the dialpad

@@ -1,5 +1,7 @@
 # Research notes
 
+> Note: the host bridge mautrix-jabber was renamed to jmpchat-matrix-bridge in 2026-10 (v0.6.0); this document keeps the old name.
+
 Facts gathered while planning, with sources. Anything marked **unverified** has to be confirmed
 (usually in a spike) before code depends on it.
 

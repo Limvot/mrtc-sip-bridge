@@ -1,5 +1,7 @@
 # Phase 3 implementation spec: outbound calls
 
+> Note: the host bridge mautrix-jabber was renamed to jmpchat-matrix-bridge in 2026-10 (v0.6.0); this document keeps the old name.
+
 Status: **ready for implementation** (written 2026-10-17, branch `phase3-outbound`).
 Audience: implementer agents. Follow it literally. Where this spec and your own taste differ, this spec
 wins. If something here does not compile against the pinned versions, stop and report it rather than

@@ -3,7 +3,7 @@
 Status: implemented and validated against a live JMP account and Synapse/LiveKit deployment (PLAN
 Phase J). Design and rationale: `docs/PHASEJ-SPEC.md` and ADR-006/ADR-011
 in `docs/DECISIONS.md`. The first embedding host is
-[mautrix-jabber](https://github.com/williamkray/mautrix-jabber) (build tag `sipcalls`, included in its
+[jmpchat-matrix-bridge](https://github.com/williamkray/jmpchat-matrix-bridge) (formerly mautrix-jabber) (build tag `sipcalls`, included in its
 default images). Part 1 is for people writing a host; part 2 is
 for users of the jabber embedded mode.
 
@@ -62,7 +62,7 @@ The core obtains tracers and meters only through `pkg/obs`. A host must call `ob
 calling `pkg/telemetry.Init`, which does it) **before** it creates the `sipaccount.Runtime`:
 `obs.Use` rebuilds the instrument registry and would drop the registrations gauge registered earlier.
 Without it, everything is a no-op. `telemetry.Options.ServiceName` sets the OTel `service.name` for the
-host (jabber passes `mautrix-jabber`). `obs.AnnotateLogger`, `obs.Logger` and `obs.LoggerSC` are the
+host (jabber passes `jmpchat-matrix-bridge`). `obs.AnnotateLogger`, `obs.Logger` and `obs.LoggerSC` are the
 shared log-correlation primitives; a host's own log helpers should delegate to them so
 `trace_id`/`span_id` are never written twice.
 
@@ -104,20 +104,20 @@ unencrypted should warn at startup when its default is encrypted (`hostkit.RoomE
 - Host builds use `nolibopusfile` (hraban/opus without opusfile); cgo and `pkg-config opus` are required.
 - Hosts without libolm add `nocrypto`.
 - Keep embedding code behind a host-owned build tag so a host that does not want SIP never links it.
-  mautrix-jabber uses `sipcalls`; the untagged build only contains SIP-free extension seams.
+  jmpchat-matrix-bridge uses `sipcalls`; the untagged build only contains SIP-free extension seams.
 - Core packages must not import `pkg/telemetry` or the OTel SDK; `internal/importcheck` enforces this.
   `pkg/hostkit` and `pkg/telemetry` are host-class.
 
 ---
 
-## Part 2: user guide, mautrix-jabber embedded mode
+## Part 2: user guide, jmpchat-matrix-bridge embedded mode
 
 In embedded mode the texts and the calls of a JMP/Cheogram number share **one Matrix room and one
 ghost** (`+1NXXNXXXXXX@cheogram.com`). Incoming calls ring in the caller's Cheogram room (created on
 demand). Outgoing calls start from an existing Cheogram 1:1 room (press call, or `call` with no number)
 or from `call <number>`.
 
-This is part of mautrix-jabber's default build (build tag `sipcalls`). Calls stay off until
+This is part of jmpchat-matrix-bridge's default build (build tag `sipcalls`). Calls stay off until
 `network.calls.enabled: true`.
 
 ### Warning: one SIP account, one bridge
@@ -147,7 +147,7 @@ network:
 ```
 
 The remaining `calls` keys are the same names, defaults and validation as the standalone `network:`
-section (see README "Configure"); `./mautrix-jabber -e` prints them all. `calls.enabled: true` without
+section (see README "Configure"); `./jmpchat-matrix-bridge -e` prints them all. `calls.enabled: true` without
 `network.cheogram: true` is a startup error. `encryption.default: true` logs a startup warning (see
 Encrypted portals).
 
@@ -201,7 +201,7 @@ use an unencrypted portal (the dev service runs with `encryption.default: false`
 ### Telemetry behaviour
 
 In the `sipcalls` build jabber initialises OpenTelemetry through this repo's `pkg/telemetry`, with
-`service.name=mautrix-jabber` unless `OTEL_SERVICE_NAME`/`DD_SERVICE` say otherwise. Differences from the
+`service.name=jmpchat-matrix-bridge` unless `OTEL_SERVICE_NAME`/`DD_SERVICE` say otherwise. Differences from the
 public jabber build:
 
 - Setting `OTEL_EXPORTER_OTLP_ENDPOINT` now also enables **metrics** (`mrtcsip.*` plus Go runtime
@@ -249,7 +249,7 @@ ResolveRoom refuses rooms that are neither an owned number portal nor the user's
 valid room whose login is not ready (jabber: not an XMPP login, or no registered SIP account), it returns
 a RoomContext with `Login` nil and `Refusal` set to the command's refusal text, and no error, so the
 widget shows the hint. Resolution runs on every action. Config: `widget:` lives in the shared
-`hostkit.Config` (standalone `network.widget`; mautrix-jabber `network.calls.widget`). `hostkit.CopyKeys`
+`hostkit.Config` (standalone `network.widget`; jmpchat-matrix-bridge `network.calls.widget`). `hostkit.CopyKeys`
 copies it and generates the secret.
 
 Dialpad PWA (`widget.pwa.enabled`, PWA-SPEC §11): call `widget.OpenDeviceStore(ctx, br, cfg, log)` before
@@ -291,7 +291,7 @@ user should see are `hostkit.NewActionError(code, msg)` (`invalid_number`, `inva
 `unavailable`; `$cmdprefix` is expanded in the message); anything else is reported as a generic
 internal error and logged scrubbed. Contact names must never be logged or traced.
 
-mautrix-jabber (local `sipcalls` build): `sipcalls_widget.go` implements this. A ready login is
+jmpchat-matrix-bridge (local `sipcalls` build): `sipcalls_widget.go` implements this. A ready login is
 `commandLoginWithAccount`, portals are `isCallPortal` (Cheogram 1:1, never group MMS or MUC), and titles
 come from `cheogramE164`. `sipcalls_widgetfeatures.go` implements the optional features: roster-only
 uses the login's cached call preferences and roster counters, Save contact is the `save-contact` roster

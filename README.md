@@ -8,8 +8,8 @@ A Matrix ↔ SIP calling bridge. It registers to a SIP provider with ordinary SI
 - Each call leaves a "missed / answered / outgoing" notice in the room.
 
 First target is a [JMP.chat](https://jmp.chat) number's SIP account. Texting for JMP numbers is handled
-separately by [mautrix-jabber](https://github.com/williamkray/mautrix-jabber) via Cheogram. A planned
-optional mode embeds this bridge's call core in mautrix-jabber so a number's texts and calls share one
+separately by [jmpchat-matrix-bridge](https://github.com/williamkray/jmpchat-matrix-bridge) (formerly mautrix-jabber) via Cheogram. A planned
+optional mode embeds this bridge's call core in jmpchat-matrix-bridge so a number's texts and calls share one
 room.
 
 **Status:** inbound calls, **outbound calls** and DTMF are implemented and validated against a live JMP
@@ -98,8 +98,8 @@ type or paste a number (normalised like `call`, same number policy), a call butt
 hang-up button. It dials through the same call core as `!sip call`, so your devices ring from the number's
 ghost and you answer to start the call.
 
-- **Contacts, Message and roster-only (embedded in mautrix-jabber only):** when the host supports them
-  (mautrix-jabber v0.3.0 and later), the Dialpad also has an optional **Name** field, a **Message** button
+- **Contacts, Message and roster-only (embedded in jmpchat-matrix-bridge only):** when the host supports them
+  (jmpchat-matrix-bridge v0.3.0 and later), the Dialpad also has an optional **Name** field, a **Message** button
   (opens the number's text chat, with an "Open chat" link), **Save contact** (saves the number to your
   Jabber roster; in a number room it shows "Saved as ..." and can rename it) and an **Only ring for
   contacts** checkbox (inbound calls from numbers outside your roster go to voicemail). A name typed
@@ -107,7 +107,7 @@ ghost and you answer to start the call.
   standalone bridge shows none of them. The widget never logs or traces contact names (the host's own
   roster logging may). See
   [docs/WIDGET-SPEC.md](docs/WIDGET-SPEC.md) §7.5 for the host interfaces.
-- **Contacts tab (embedded in mautrix-jabber only):** when the host lists contacts, the Dialpad and the
+- **Contacts tab (embedded in jmpchat-matrix-bridge only):** when the host lists contacts, the Dialpad and the
   PWA get a **Contacts** tab next to **Dial**: search your saved phone contacts by name or digits, then
   tap **Call** or **Message** on a row. Only named phone contacts appear (numbers saved without a name
   and plain Jabber contacts do not). Names are shown to you only and are kept in memory, never stored in
@@ -322,9 +322,9 @@ Dial the number from the SIP username's account (JMP shows your real number as c
   `!sip call <number>` from Element X (you answer the bridge's ring, which Element X handles as joining an
   existing call), or place the call from Sable, which doesn't wait for a specific recipient.
 
-## Embedded mode (mautrix-jabber)
+## Embedded mode (jmpchat-matrix-bridge)
 
-The call core also runs inside [mautrix-jabber](https://github.com/williamkray/mautrix-jabber) (build tag
+The call core also runs inside [jmpchat-matrix-bridge](https://github.com/williamkray/jmpchat-matrix-bridge) (build tag
 `sipcalls`, included in its default images; off unless `network.calls.enabled: true`), so a Cheogram
 number's texts and calls share one Matrix room and one ghost.
 Calls are configured under `network.calls` and the SIP account is set per login with `sip-login`,
@@ -574,7 +574,7 @@ Log lines emitted inside a sampled, traced operation carry four fields, each onc
 - `dd.trace_id` and `dd.span_id`: decimal strings. The trace id is the low 64 bits. This is the Datadog
   convention.
 
-These are the same field names as in mautrix-jabber, so one pipeline serves both. The fields appear only
+These are the same field names as in jmpchat-matrix-bridge, so one pipeline serves both. The fields appear only
 on lines logged inside traced work. Other lines, and all lines when tracing is off, have no trace fields.
 Call lines also carry `call_id`, to find a whole call across its several traces.
 

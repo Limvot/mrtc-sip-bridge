@@ -16,12 +16,12 @@ Goals:
   Matrix HTTP) with **vanilla OpenTelemetry** (OTLP to any collector) and OTel-compatible commercial
   backends, Datadog first among them.
 - Zero cost and zero behaviour change when telemetry is not configured.
-- Works identically when the call core is embedded in mautrix-jabber (ADR-006): core spans and
+- Works identically when the call core is embedded in jmpchat-matrix-bridge (formerly mautrix-jabber) (ADR-006): core spans and
   metrics join jabber's pipeline, and service identity is jabber's.
 
 ---
 
-## 1. Lessons from mautrix-jabber and how this project avoids them
+## 1. Lessons from jmpchat-matrix-bridge and how this project avoids them
 
 | # | What went wrong in jabber | Fixed in | What we do from day one |
 |---|---|---|---|
@@ -41,7 +41,7 @@ Goals:
 
 ## 2. Configuration and initialisation (host side)
 
-### 2.1 Environment only, identical to mautrix-jabber
+### 2.1 Environment only, identical to jmpchat-matrix-bridge
 
 No config-file keys. Telemetry is configured only through standard environment variables. Traces and
 metrics are decided independently.
@@ -86,7 +86,7 @@ input ctx unchanged (identity, tested).
   `SIPConnector.Stop()` (`bridgev2.StoppableNetwork`, called after all clients disconnect, so the
   unregister spans are flushed).
 
-### 2.3 Port `pkg/telemetry` from mautrix-jabber: yes, split in two
+### 2.3 Port `pkg/telemetry` from jmpchat-matrix-bridge: yes, split in two
 
 Porting is fine (same author, no licence issue) and is the fastest way to inherit the fixes in §1.
 But jabber's package mixes two things that ADR-006 needs separated: SDK installation (host only) and
@@ -129,7 +129,7 @@ Changes relative to jabber:
    never `otel.Tracer(...)`/`otel.GetTracerProvider()` directly (one choke point for the enabled gate
    and naming).
 3. The **host** owns SDK init, resource, exporters, propagator choice and shutdown: the standalone
-   `cmd/mrtc-sip-bridge` via `pkg/telemetry`, or mautrix-jabber via its own `pkg/telemetry`.
+   `cmd/mrtc-sip-bridge` via `pkg/telemetry`, or jmpchat-matrix-bridge via its own `pkg/telemetry`.
 4. Enforced by `internal/importcheck` (T6 extends it: skip `pkg/telemetry` like `pkg/connector` when
    collecting core dirs, and forbid the prefixes above in core files; `_test.go` files may import
    `sdk/trace/tracetest` and `sdk/metric`).
@@ -172,11 +172,11 @@ if obs.Enabled() {
 }
 ```
 
-Embedded host (mautrix-jabber, Phase J): jabber's sipcalls telemetry backend calls `telemetry.Init` of
-this repo with `Options.ServiceName = "mautrix-jabber"`, which calls `obs.Use`; jabber's annotation
+Embedded host (jmpchat-matrix-bridge, Phase J): jabber's sipcalls telemetry backend calls `telemetry.Init` of
+this repo with `Options.ServiceName = "jmpchat-matrix-bridge"`, which calls `obs.Use`; jabber's annotation
 helpers delegate to `obs.AnnotateLogger`/`Logger`/`LoggerSC` (PHASEJ-SPEC §4.3).
 
-Result: core spans use the same provider, resource (`service.name=mautrix-jabber`), sampler and
+Result: core spans use the same provider, resource (`service.name=jmpchat-matrix-bridge`), sampler and
 exporter as jabber's own spans. Core span names are prefixed (`sip.`, `call.`, `rtc.`, `matrixrtc.`, `media.`) so they do not
 collide with jabber's (`xmpp.`, `mam.`, `bridge.`, `cmd.`). The instrumentation scope tells them apart.
 Core calls into the host (`CallHost.ResolveCallRoom`, `SendCallNotice`, `GhostIntent.*`) always pass
@@ -502,7 +502,7 @@ every active call before flushing.
 
 ### 5.11 Embedded host (Phase J)
 
-Host spans of the mautrix-jabber embedded host (sipcalls build, PHASEJ-SPEC §8), created with
+Host spans of the jmpchat-matrix-bridge embedded host (sipcalls build, PHASEJ-SPEC §8), created with
 `obs`/`hostkit` helpers. Core spans (`sip.*`, `call.*`, `rtc.*`, `matrixrtc.*`, `media.*`) are unchanged.
 
 | Span | Kind | Class | Notes |
@@ -682,7 +682,7 @@ T6 acceptance criteria:
   network change; restart cleanup emits one `bridge.cleanup_stale_calls` root with counts; concurrent-call
   tests assert spans of different calls never share a trace.
 - **Phase J (embedded):** jabber's `sipcalls` telemetry backend delegates to this repo's
-  `telemetry.Init` with `Options.ServiceName = "mautrix-jabber"` (which calls `obs.Use`, traces and
+  `telemetry.Init` with `Options.ServiceName = "jmpchat-matrix-bridge"` (which calls `obs.Use`, traces and
   metrics) and its span/log helpers delegate to `pkg/obs` (`obs.AnnotateLogger`; log-annotation
   convergence, §3.2); an embedded test asserts core spans carry jabber's resource `service.name` and nest
   under a jabber-created span passed in ctx; `docs/EMBEDDING.md` documents the new `mrtcsip.*` metrics and
@@ -722,8 +722,8 @@ listed, privacy tests extended to the new flows, Opus review checks root/child c
 ## 9. Dependencies and licences
 
 Licences checked 2026-10-16 with `gh api repos/<repo> --jq .license.spdx_id`. Pin OTel to **v1.47.0**,
-the same version as mautrix-jabber, so the embedded build resolves one version. All are compatible with
-the project's planned licences and with being imported by mautrix-jabber (ADR-006). T6e adds them to
+the same version as jmpchat-matrix-bridge, so the embedded build resolves one version. All are compatible with
+the project's planned licences and with being imported by jmpchat-matrix-bridge (ADR-006). T6e adds them to
 `docs/CREDITS.md`.
 
 | Module | Licence | Used by | Notes |
@@ -752,5 +752,5 @@ Apache-2.0 obligations: keep NOTICE/attribution in the third-party licences file
    should decide whether to fix it already in Phase 1.
 2. PLAN.md Phase 5 telemetry bullets should point here once T6 is accepted (T6e does it).
 3. Resolved (Phase J): embedded metrics come from this repo's `pkg/telemetry` (jabber's sipcalls build
-   initialises through it with `Options.ServiceName = "mautrix-jabber"`), so no jabber MeterProvider is
+   initialises through it with `Options.ServiceName = "jmpchat-matrix-bridge"`), so no jabber MeterProvider is
    needed.

@@ -1,6 +1,6 @@
 // Package core is the host-independent call library (ADR-006).
 //
-// A host (the standalone bridgev2 bridge, or mautrix-jabber in embedded mode) implements CallHost, which
+// A host (the standalone bridgev2 bridge, or jmpchat-matrix-bridge in embedded mode) implements CallHost, which
 // tells core how to find or create the Matrix room and ghost for a remote phone number, post notices and
 // mark rooms read as the owner. The host then feeds MatrixRTC events into core, either by passing its
 // appservice event processor to RegisterMatrixRTCHandlers or by calling Ingest.HandleMatrixRTCEvent
