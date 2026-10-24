@@ -215,10 +215,22 @@ func (e *webRTCEngine) localJingle() (*Description, *JingleTransport, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	// Advertise only what we actually bridge: Opus audio plus RFC 4733 telephone-event.
+	// pion's default codec set would otherwise leak PCMU/PCMA/G722 into the Jingle description.
+	var pts []PayloadType
+	for _, pt := range desc.PayloadTypes {
+		if equalFold(pt.Name, "opus") {
+			pts = append(pts, pt)
+		}
+	}
+	if len(pts) == 0 {
+		return nil, nil, fmt.Errorf("jingleleg: local description has no opus")
+	}
 	// Advertise telephone-event alongside Opus (pion does not negotiate it).
-	desc.PayloadTypes = append(desc.PayloadTypes, PayloadType{
+	pts = append(pts, PayloadType{
 		ID: e.tePT, Name: "telephone-event", ClockRate: 8000,
 	})
+	desc.PayloadTypes = pts
 	if len(tr.Candidates) > 0 {
 		c := tr.Candidates[0]
 		e.localRTP = fmt.Sprintf("%s:%d", c.IP, c.Port)

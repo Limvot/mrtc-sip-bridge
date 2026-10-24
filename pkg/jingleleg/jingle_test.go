@@ -72,7 +72,7 @@ func TestJingleTerminateReason(t *testing.T) {
 	raw, err := MarshalJingle(&Jingle{
 		Action: ActionSessionTerminate,
 		SID:    "s1",
-		Reason: &Reason{Condition: ReasonDecline, Text: "no thanks"},
+		Reason: &Reason{Condition: ReasonDeclined, Text: "no thanks"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestJingleTerminateReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if j.Reason == nil || j.Reason.Condition != ReasonDecline || j.Reason.Text != "no thanks" {
+	if j.Reason == nil || j.Reason.Condition != ReasonDeclined || j.Reason.Text != "no thanks" {
 		t.Fatalf("reason mismatch: %+v", j.Reason)
 	}
 }
@@ -116,7 +116,7 @@ func TestJMIRoundTrip(t *testing.T) {
 	cases := []JMI{
 		{Action: JMIPropose, ID: "sid1", Descriptions: []Description{{Media: "audio"}}},
 		{Action: JMIProceed, ID: "sid1"},
-		{Action: JMIReject, ID: "sid1", Reason: &Reason{Condition: ReasonDecline}},
+		{Action: JMIReject, ID: "sid1", Reason: &Reason{Condition: ReasonDeclined}},
 		{Action: JMIRetract, ID: "sid1", Reason: &Reason{Condition: ReasonCancel}},
 		{Action: JMIFinish, ID: "sid1", Reason: &Reason{Condition: ReasonSuccess}},
 		{Action: JMIAccept, ID: "sid1"},

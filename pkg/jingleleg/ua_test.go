@@ -396,7 +396,7 @@ func TestOutboundRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reject, _ := JMI{Action: JMIReject, ID: call.Info().CallID, Reason: &Reason{Condition: ReasonDecline}}.Marshal()
+	reject, _ := JMI{Action: JMIReject, ID: call.Info().CallID, Reason: &Reason{Condition: ReasonDeclined}}.Marshal()
 	h.ua.HandleMessage(context.Background(), "+15550001111@cheogram.com", "chat", "m1", reject)
 	end := waitEvent(t, call.Events(), leg.EventEnded)
 	if end.Cause != leg.EndRemoteRejected {
@@ -523,4 +523,23 @@ func TestInboundGlarePeerInitiates(t *testing.T) {
 		t.Fatalf("peer initiate must be answered: %+v", h.tp.sent)
 	}
 	waitEvent(t, call.Events(), leg.EventAnswered)
+}
+
+// TestIQErrorEndsCall pins the diagnostic path: when the gateway answers our session-initiate
+// with <iq type='error'/>, the call must end with the stanza error condition visible (this was
+// invisible before: dead air until the far end gave up).
+func TestIQErrorEndsCall(t *testing.T) {
+	h := newHarness(t, true)
+	propose := mustJMI(JMI{Action: JMIPropose, ID: "sid1", Descriptions: []Description{{Media: "audio"}}})
+	h.ua.HandleMessage(context.Background(), "+15550001111@cheogram.com", "chat", "m1", propose)
+	call := h.waitInvite(t)
+	call.Answer()
+	errPayload := []byte(`<error xmlns="jabber:client" type="cancel"><text>nope</text><item-not-found xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/></error>`)
+	if !h.ua.HandleIQ(context.Background(), "+15550001111@cheogram.com", "error", "sid1", errPayload) {
+		t.Fatal("iq error not handled")
+	}
+	end := waitEvent(t, call.Events(), leg.EventEnded)
+	if end.Cause != leg.EndFailed || !strings.Contains(end.Reason, "item-not-found") {
+		t.Fatalf("end mismatch: %+v", end)
+	}
 }

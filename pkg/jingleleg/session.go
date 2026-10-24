@@ -185,9 +185,9 @@ func (c *Inbound) Reject(code int, reason string) {
 	sid, peer := c.sid, c.peerFull
 	c.mu.Unlock()
 	if offered {
-		c.sendTerminate(peer, sid, ReasonDecline, reason)
+		c.sendTerminate(peer, sid, ReasonDeclined, reason)
 	} else {
-		r := &Reason{Condition: ReasonDecline}
+		r := &Reason{Condition: ReasonDeclined}
 		if reason != "" {
 			r.Text = reason
 		}
@@ -323,13 +323,16 @@ func (c *callCore) onSessionAccept(j *Jingle) {
 
 // onTerminate handles <jingle action='session-terminate'>.
 func (c *callCore) onTerminate(j *Jingle) {
-	cond := ReasonFailed
+	cond := ReasonGeneralError
 	if j.Reason != nil && j.Reason.Condition != "" {
 		cond = j.Reason.Condition
 	}
 	text := ""
 	if j.Reason != nil {
 		text = j.Reason.Text
+	}
+	if text == "" {
+		text = cond // keep the real XEP-0166 condition visible in logs and notices
 	}
 	c.mu.Lock()
 	answered := c.state == stAccepted
@@ -345,9 +348,9 @@ func (c *callCore) onTerminate(j *Jingle) {
 		} else {
 			cause = leg.EndCancelled
 		}
-	case ReasonCancel:
+	case ReasonCancel, ReasonTimeout, ReasonExpired:
 		cause = leg.EndCancelled
-	case ReasonBusy, ReasonDecline, ReasonGone:
+	case ReasonBusy, ReasonDeclined, ReasonGone:
 		if answered {
 			cause = leg.EndRemoteBye
 		} else if c.outbound {
@@ -355,7 +358,11 @@ func (c *callCore) onTerminate(j *Jingle) {
 		} else {
 			cause = leg.EndCancelled
 		}
+	case ReasonAlternativeSession:
+		cause = leg.EndRemoteRejected
 	default:
+		// general-error, failed-application/transport, unsupported-*, incompatible-parameters,
+		// connectivity/media/security-error: the peer could not run the session.
 		cause = leg.EndFailed
 	}
 	c.end(cause, terminateStatus(cond, answered), text, nil)
@@ -424,14 +431,14 @@ func (c *callCore) startOffer() {
 	if c.engine == nil {
 		eng, err := c.u.cfg.NewEngine()
 		if err != nil {
-			c.end(leg.EndFailed, 500, "engine", err)
+			c.failWithTerminate("engine", err)
 			return
 		}
 		c.engine = eng
 	}
 	desc, transport, err := c.engine.Offer()
 	if err != nil {
-		c.end(leg.EndFailed, 500, "engine", err)
+		c.failWithTerminate("engine", err)
 		return
 	}
 	offer := &Jingle{
@@ -448,11 +455,11 @@ func (c *callCore) startOffer() {
 	}
 	payload, err := MarshalJingle(offer)
 	if err != nil {
-		c.end(leg.EndFailed, 500, "marshal", err)
+		c.failWithTerminate("marshal", err)
 		return
 	}
 	if err := c.u.transport.SendIQ(context.Background(), c.peerFull, "set", c.sid, payload); err != nil {
-		c.end(leg.EndFailed, 500, "send", err)
+		c.failWithTerminate("send", err)
 		return
 	}
 	c.mu.Lock()
@@ -477,7 +484,7 @@ func (c *callCore) acceptNow() {
 		eng, err := c.u.cfg.NewEngine()
 		if err != nil {
 			c.emit(leg.CallEvent{Kind: leg.EventAnswerFailed, At: time.Now(), Err: err})
-			c.end(leg.EndFailed, 500, "engine", err)
+			c.failWithTerminate("engine", err)
 			return
 		}
 		c.engine = eng
@@ -485,7 +492,7 @@ func (c *callCore) acceptNow() {
 	desc, transport, err := c.engine.Accept(offer)
 	if err != nil {
 		c.emit(leg.CallEvent{Kind: leg.EventAnswerFailed, At: time.Now(), Err: err})
-		c.end(leg.EndFailed, 488, "engine", err)
+		c.failWithTerminate("engine", err)
 		return
 	}
 	answer := &Jingle{
@@ -502,11 +509,11 @@ func (c *callCore) acceptNow() {
 	}
 	payload, err := MarshalJingle(answer)
 	if err != nil {
-		c.end(leg.EndFailed, 500, "marshal", err)
+		c.failWithTerminate("marshal", err)
 		return
 	}
 	if err := c.u.transport.SendIQ(context.Background(), c.peerFull, "set", c.sid, payload); err != nil {
-		c.end(leg.EndFailed, 500, "send", err)
+		c.failWithTerminate("send", err)
 		return
 	}
 	now := time.Now()
@@ -595,6 +602,13 @@ func rejectStatus(code int) int {
 	return code
 }
 
+// failWithTerminate ends the call with a local error, telling the peer with a
+// session-terminate so its side stops ringing.
+func (c *callCore) failWithTerminate(reason string, err error) {
+	c.sendTerminate(c.peerFull, c.sid, ReasonGeneralError, reason)
+	c.end(leg.EndFailed, 500, reason, err)
+}
+
 // terminateStatus maps a Jingle reason condition onto a SIP-like status.
 func terminateStatus(condition string, answered bool) int {
 	switch condition {
@@ -606,7 +620,7 @@ func terminateStatus(condition string, answered bool) int {
 		return 487
 	case ReasonTimeout:
 		return 408
-	case ReasonDecline, ReasonGone:
+	case ReasonDeclined, ReasonGone:
 		return 603
 	default:
 		if answered {

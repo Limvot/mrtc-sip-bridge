@@ -179,6 +179,7 @@ func jingleFromSDP(sdp string) (*Description, *JingleTransport, error) {
 			}
 		case strings.HasPrefix(line, "a=candidate:"):
 			if c, ok := parseSDPCandidate(line[len("a=candidate:"):]); ok {
+				c.ID = fmt.Sprintf("c%d", len(tr.Candidates))
 				tr.Candidates = append(tr.Candidates, c)
 			}
 		case strings.HasPrefix(line, "a=ssrc:"):

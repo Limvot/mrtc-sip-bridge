@@ -131,8 +131,8 @@ type Candidate struct {
 	XMLName    xml.Name `xml:"candidate"`
 	Component  int      `xml:"component,attr"`
 	Foundation string   `xml:"foundation,attr"`
-	Generation int      `xml:"generation,attr,omitempty"`
-	ID         string   `xml:"id,attr,omitempty"`
+	Generation int      `xml:"generation,attr"`
+	ID         string   `xml:"id,attr"`
 	IP         string   `xml:"ip,attr"`
 	Port       int      `xml:"port,attr"`
 	Priority   int      `xml:"priority,attr"`
@@ -150,8 +150,8 @@ type Fingerprint struct {
 	Value   string   `xml:",chardata"`
 }
 
-// Reason is <reason/>: one condition element (success, busy, cancel, decline, timeout, failed,
-// gone, alternative-session, ...) plus optional <text/>.
+// Reason is <reason/>: one condition element (XEP-0166 §7.2.1, e.g. success, busy, cancel,
+// declined, timeout, general-error) plus optional <text/>.
 type Reason struct {
 	XMLName   xml.Name `xml:"reason"`
 	Condition string   `xml:"-"` // element name of the condition, e.g. "success"
@@ -159,14 +159,26 @@ type Reason struct {
 }
 
 // End-condition names (XEP-0166 §7.2.1).
+// End-condition names (XEP-0166 §7.2.1). Easy to get wrong: it is <declined/>, not <decline/>,
+// and <general-error/>, not <failed/>.
 const (
-	ReasonSuccess = "success"
-	ReasonBusy    = "busy"
-	ReasonCancel  = "cancel"
-	ReasonDecline = "decline"
-	ReasonTimeout = "timeout"
-	ReasonFailed  = "failed"
-	ReasonGone    = "gone"
+	ReasonSuccess               = "success"
+	ReasonBusy                  = "busy"
+	ReasonCancel                = "cancel"
+	ReasonDeclined              = "declined"
+	ReasonTimeout               = "timeout"
+	ReasonGone                  = "gone"
+	ReasonGeneralError          = "general-error"
+	ReasonAlternativeSession    = "alternative-session"
+	ReasonFailedApplication     = "failed-application"
+	ReasonFailedTransport       = "failed-transport"
+	ReasonUnsupportedApps       = "unsupported-applications"
+	ReasonUnsupportedTransports = "unsupported-transports"
+	ReasonIncompatibleParams    = "incompatible-parameters"
+	ReasonConnectivityError     = "connectivity-error"
+	ReasonMediaError            = "media-error"
+	ReasonSecurityError         = "security-error"
+	ReasonExpired               = "expired"
 )
 
 // MarshalXML writes <reason><condition/><text/></reason>.

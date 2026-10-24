@@ -2,6 +2,7 @@ package jingleleg
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
 	"strings"
 	"sync"
@@ -201,6 +202,7 @@ func (u *UA) dropSession(sid string) {
 // HandleMessage feeds one incoming <message/> child payload (a JMI action) into the leg.
 // handled=false means the payload was not a JMI action (or not ours).
 func (u *UA) HandleMessage(ctx context.Context, from, msgType, id string, payload []byte) (handled bool) {
+	u.trace(ctx, "in", from, payload)
 	j, ok, err := ParseJMI(payload)
 	if err != nil || !ok {
 		return false
@@ -303,6 +305,10 @@ func (u *UA) onPropose(j JMI, from string) {
 // HandleIQ feeds one incoming <iq/> child payload (<jingle .../>) into the leg.
 // handled=false means the payload was not a Jingle action (or not ours).
 func (u *UA) HandleIQ(ctx context.Context, from, iqType, id string, payload []byte) (handled bool) {
+	u.trace(ctx, "in", from, payload)
+	if iqType == "error" {
+		return u.handleIQError(ctx, from, id, payload)
+	}
 	if iqType != "set" {
 		return false
 	}
@@ -397,6 +403,54 @@ func (u *UA) onDirectInitiate(j *Jingle, from string) {
 }
 
 func mustJMIErr(j JMI) ([]byte, error) { return j.Marshal() }
+
+// trace logs one raw Jingle/JMI payload at debug level (call signalling carries no secrets).
+func (u *UA) trace(ctx context.Context, dir, from string, payload []byte) {
+	u.log.Debug().Str("dir", dir).Str("from", from).Str("payload", string(payload)).Msg("Jingle stanza")
+}
+
+// handleIQError processes <iq type='error'/> answers to our session stanzas (the gateway
+// rejecting a session-initiate is otherwise invisible: no terminate, no event, dead air).
+func (u *UA) handleIQError(ctx context.Context, from, id string, payload []byte) bool {
+	cond, text := parseStanzaError(payload)
+	u.mu.Lock()
+	core := u.sessions[id]
+	u.mu.Unlock()
+	reason := cond
+	if text != "" {
+		reason = cond + ": " + text
+	}
+	u.log.Warn().Str("from", from).Str("sid", id).Str("condition", cond).Str("text", text).
+		Msg("Peer answered our Jingle stanza with an IQ error")
+	if core == nil {
+		return true // ours (matches a session id space) but the call is already gone
+	}
+	core.end(leg.EndFailed, 500, "gateway error "+reason, nil)
+	return true
+}
+
+// parseStanzaError extracts the XMPP stanza error condition and text from an <error/> payload.
+func parseStanzaError(payload []byte) (condition, text string) {
+	var probe struct {
+		XMLName xml.Name `xml:"error"`
+		Text    string   `xml:"text"`
+		Any     []struct {
+			XMLName xml.Name
+		} `xml:",any"`
+	}
+	if err := xml.Unmarshal(payload, &probe); err != nil {
+		return "malformed-error", string(payload)
+	}
+	for _, e := range probe.Any {
+		if e.XMLName.Space == "urn:ietf:params:xml:ns:xmpp-stanzas" {
+			condition = e.XMLName.Local
+		}
+	}
+	if condition == "" {
+		condition = "unknown"
+	}
+	return condition, probe.Text
+}
 
 // PeerJIDFor is the default Cheogram mapping helper hosts can reuse: "+E.164@domain".
 func PeerJIDFor(domain string) func(string) (string, error) {
