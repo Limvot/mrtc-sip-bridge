@@ -189,10 +189,11 @@ func newHarness(t *testing.T, proposeFirst bool) *harness {
 	h := &harness{tp: tp, inviteCh: make(chan leg.InboundCall, 8)}
 	pf := proposeFirst
 	ua, err := New(Config{
-		LocalBare:    "me@example.com/bridge",
-		Transport:    tp,
-		PeerDomain:   "cheogram.com",
-		ProposeFirst: &pf,
+		LocalBare:         "me@example.com/bridge",
+		Transport:         tp,
+		PeerDomain:        "cheogram.com",
+		ProposeFirst:      &pf,
+		PeerInitiateGrace: 10 * time.Millisecond,
 		NewEngine: func() (Engine, error) {
 			e := newFakeEngine()
 			h.engines = append(h.engines, e)
@@ -219,6 +220,20 @@ func (h *harness) waitInvite(t *testing.T) leg.InboundCall {
 		t.Fatal("no invite")
 		return nil
 	}
+}
+
+// waitSent waits until a stanza containing substr was sent (the self-initiate is delayed by
+// PeerInitiateGrace).
+func (h *harness) waitSent(t *testing.T, substr string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if h.tp.count(substr) > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for stanza %q; sent: %+v", substr, h.tp.sent)
 }
 
 func waitEvent(t *testing.T, ch <-chan leg.CallEvent, kind leg.CallEventKind) leg.CallEvent {
@@ -368,9 +383,7 @@ func TestOutboundProposeFirstHappyPath(t *testing.T) {
 
 	proceed, _ := JMI{Action: JMIProceed, ID: call.Info().CallID}.Marshal()
 	h.ua.HandleMessage(context.Background(), "+15550001111@cheogram.com", "chat", "m1", proceed)
-	if h.tp.count("session-initiate") != 1 {
-		t.Fatalf("session-initiate not sent: %+v", h.tp.sent)
-	}
+	h.waitSent(t, "session-initiate")
 	waitEvent(t, call.Events(), leg.EventProvisional)
 
 	// Peer answers the session.
@@ -426,9 +439,7 @@ func TestOutboundDirectInitiate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h.tp.count("session-initiate") != 1 {
-		t.Fatalf("session-initiate not sent immediately: %+v", h.tp.sent)
-	}
+	h.waitSent(t, "session-initiate")
 	if h.tp.count("propose") != 0 {
 		t.Fatal("propose must not be sent in direct mode")
 	}
@@ -499,9 +510,7 @@ func TestInboundProposeAnswerCalleeInitiates(t *testing.T) {
 	if st, ok := h.tp.last("proceed"); !ok || st.kind != "message" {
 		t.Fatalf("proceed not sent: %+v", h.tp.sent)
 	}
-	if h.tp.count("session-initiate") != 1 {
-		t.Fatalf("Answer must initiate the Jingle session: %+v", h.tp.sent)
-	}
+	h.waitSent(t, "session-initiate")
 	// The gateway answers our initiate.
 	h.ua.HandleIQ(context.Background(), "+15550001111@cheogram.com", "set", "iq1", remoteAnswer("sid1"))
 	ev := waitEvent(t, call.Events(), leg.EventAnswered)
@@ -541,5 +550,26 @@ func TestIQErrorEndsCall(t *testing.T) {
 	end := waitEvent(t, call.Events(), leg.EventEnded)
 	if end.Cause != leg.EndFailed || !strings.Contains(end.Reason, "item-not-found") {
 		t.Fatalf("end mismatch: %+v", end)
+	}
+}
+
+// TestOutboundPeerInitiatesAfterProceed covers the gateway-initiates dialect: after its
+// proceed, Cheogram may send session-initiate itself; we must answer it instead of starting a
+// competing session (the grace timer only fires when nothing arrives).
+func TestOutboundPeerInitiatesAfterProceed(t *testing.T) {
+	h := newHarness(t, true)
+	call, err := h.ua.Dial(leg.DialRequest{Target: "+15550001111"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proceed := mustJMI(JMI{Action: JMIProceed, ID: call.Info().CallID})
+	h.ua.HandleMessage(context.Background(), "+15550001111@cheogram.com", "chat", "m1", proceed)
+	h.ua.HandleIQ(context.Background(), "+15550001111@cheogram.com", "set", "iq1", remoteOffer(call.Info().CallID))
+	if _, ok := h.tp.last("session-accept"); !ok {
+		t.Fatalf("peer initiate must be answered: %+v", h.tp.sent)
+	}
+	waitEvent(t, call.Events(), leg.EventAnswered)
+	if h.tp.count("session-initiate") != 0 {
+		t.Fatalf("no competing initiate expected: %+v", h.tp.sent)
 	}
 }

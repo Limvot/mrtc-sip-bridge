@@ -30,6 +30,11 @@ type Config struct {
 	// ProposeFirst (default true) sends XEP-0353 <propose/> before session-initiate on
 	// outbound calls and expects <proceed/>. false sends session-initiate directly.
 	ProposeFirst *bool
+	// PeerInitiateGrace is how long we wait for the peer's session-initiate (XEP-0353 says the
+	// caller initiates; Cheogram behaves as the initiator on its side of both directions) before
+	// initiating ourselves. 0 = 1.5s. Glare (both initiate) is answered by taking the peer's
+	// offer as authoritative.
+	PeerInitiateGrace time.Duration
 
 	Log zerolog.Logger
 	// OnStateChange is called on every state change (Start/Stop). Must not block.
@@ -72,6 +77,9 @@ func New(cfg Config) (*UA, error) {
 	}
 	if cfg.NewEngine == nil {
 		cfg.NewEngine = func() (Engine, error) { return nil, ErrNoEngine }
+	}
+	if cfg.PeerInitiateGrace <= 0 {
+		cfg.PeerInitiateGrace = 1500 * time.Millisecond
 	}
 	if cfg.PeerJID == nil {
 		domain := cfg.PeerDomain

@@ -66,6 +66,9 @@ type callCore struct {
 
 	// sentOffer is set once we sent session-initiate (outbound dial, or inbound callee-initiate).
 	sentOffer bool
+	// proceedSent is set once we sent JMI proceed (inbound answer / outbound proceed): a peer
+	// session-initiate arriving afterwards is answered instead of starting a competing session.
+	proceedSent bool
 
 	engine Engine
 	events chan leg.CallEvent
@@ -159,10 +162,11 @@ func (c *Inbound) Answer() {
 		c.mu.Unlock()
 		return
 	case stProposed:
+		c.proceedSent = true
 		sid, peer := c.sid, c.peerFull
 		c.mu.Unlock()
 		_ = c.u.transport.SendMessage(context.Background(), peer, "chat", sid, mustJMI(JMI{Action: JMIProceed, ID: sid}))
-		c.startOffer()
+		c.initiateAfterGrace()
 	case stOffered:
 		initiated := c.sentOffer
 		c.mu.Unlock()
@@ -275,10 +279,11 @@ func (c *callCore) onSessionInitiate(j *Jingle, peerFull string) {
 		}
 	}
 	glare := c.sentOffer
+	proceeded := c.proceedSent
 	c.info.RemoteAddr = c.peerFull
 	c.mu.Unlock()
 
-	if proceeding || glare {
+	if proceeding || glare || proceeded {
 		// Answer the peer's session-initiate: theirs is the authoritative offer (glare
 		// resolution when both sides initiated; the plain case when we waited for it).
 		c.acceptNow()
@@ -393,7 +398,10 @@ func (c *callCore) onJMI(j JMI, fromOwnBare bool) {
 		if state != stProposed {
 			return
 		}
-		c.startOffer()
+		c.mu.Lock()
+		c.proceedSent = true
+		c.mu.Unlock()
+		c.initiateAfterGrace()
 		c.emit(leg.CallEvent{Kind: leg.EventProvisional, At: time.Now(), StatusCode: 183})
 	case JMIReject:
 		if fromOwnBare {
@@ -424,6 +432,21 @@ func (c *callCore) onJMI(j JMI, fromOwnBare bool) {
 			c.end(leg.EndCancelled, 487, "caller cancelled", nil)
 		}
 	}
+}
+
+// initiateAfterGrace waits PeerInitiateGrace for the peer's session-initiate before sending our
+// own: XEP-0353 has the caller initiate, but gateways differ on who does, and simultaneous
+// initiation is resolved in onSessionInitiate by taking the peer's offer.
+func (c *callCore) initiateAfterGrace() {
+	time.AfterFunc(c.u.cfg.PeerInitiateGrace, func() {
+		c.mu.Lock()
+		st, offered, sent := c.state, c.offer != nil, c.sentOffer
+		c.mu.Unlock()
+		if st == stEnded || sent || offered {
+			return
+		}
+		c.startOffer()
+	})
 }
 
 // startOffer builds the engine offer and sends session-initiate (outbound, after proceed).
@@ -458,16 +481,16 @@ func (c *callCore) startOffer() {
 		c.failWithTerminate("marshal", err)
 		return
 	}
-	if err := c.u.transport.SendIQ(context.Background(), c.peerFull, "set", c.sid, payload); err != nil {
-		c.failWithTerminate("send", err)
-		return
-	}
 	c.mu.Lock()
 	c.sentOffer = true
 	if c.state == stProposed {
 		c.state = stOffered
 	}
 	c.mu.Unlock()
+	if err := c.u.transport.SendIQ(context.Background(), c.peerFull, "set", c.sid, payload); err != nil {
+		c.failWithTerminate("send", err)
+		return
+	}
 }
 
 // acceptNow answers a pending session-initiate and emits EventAnswered.
