@@ -462,3 +462,26 @@ func TestHandleIQIgnoresForeignNamespaces(t *testing.T) {
 		t.Fatal("foreign message claimed")
 	}
 }
+
+// TestInboundProposeOfferAcceptable pins the XEP-0353 propose-as-offer semantics: a propose
+// usually carries only <description media="audio"/> (no payload types) and the codecs are
+// negotiated later on session-initiate, so it must look like a usable audio offer to the call
+// manager's codec check (regression: "Missed call (unsupported audio codec)" on real JMP calls).
+func TestInboundProposeOfferAcceptable(t *testing.T) {
+	for name, propose := range map[string][]byte{
+		"bare description": mustJMI(JMI{Action: JMIPropose, ID: "sid1", Descriptions: []Description{{Media: "audio"}}}),
+		"no description":   mustJMI(JMI{Action: JMIPropose, ID: "sid1"}),
+		"with opus": mustJMI(JMI{Action: JMIPropose, ID: "sid1", Descriptions: []Description{{Media: "audio",
+			PayloadTypes: []PayloadType{{ID: 111, Name: "opus", ClockRate: 48000}}}}}),
+	} {
+		h := newHarness(t, true)
+		if !h.ua.HandleMessage(context.Background(), "+15550001111@cheogram.com", "chat", "m1", propose) {
+			t.Fatalf("%s: propose not handled", name)
+		}
+		call := h.waitInvite(t)
+		o := call.Info().Offer
+		if !o.HasSDP || (!o.PCMU && !o.Opus) {
+			t.Fatalf("%s: propose must be a usable audio offer: %+v", name, o)
+		}
+	}
+}

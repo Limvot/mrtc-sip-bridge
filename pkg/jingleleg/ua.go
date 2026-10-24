@@ -258,14 +258,18 @@ func (u *UA) onPropose(j JMI, from string) {
 			codecs = append(codecs, fmt.Sprintf("%s/%d", pt.Name, pt.ID))
 		}
 		o = leg.Offer{
-			HasSDP:           len(d.PayloadTypes) > 0,
+			// A XEP-0353 propose IS the call offer (usually a bare <description media="audio"/>
+			// with no payload types): codecs are negotiated later on session-initiate. So HasSDP
+			// is true here and Opus defaults to true when nothing is listed.
+			HasSDP:           true,
 			Opus:             hasCodec(&d, "opus") || len(d.PayloadTypes) == 0,
+			PCMU:             hasCodec(&d, "PCMU"),
 			TelephoneEvent:   hasCodec(&d, "telephone-event"),
 			TelephoneEventPT: uint8(tePT(&d)),
 			Codecs:           codecs,
 		}
 	} else {
-		o = leg.Offer{Opus: true}
+		o = leg.Offer{HasSDP: true, Opus: true}
 	}
 	core := &callCore{
 		u:        u,
