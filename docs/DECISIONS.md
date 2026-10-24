@@ -488,3 +488,66 @@ browser backup signs the device out; the origin of `public_url` holds a long-liv
 **Would revisit if:** Element X gains room widgets, a Matrix login inside the PWA becomes practical (then
 the device token could be replaced by the user's own Matrix session plus OpenID), or Web Push for call
 status is wanted.
+
+---
+
+## ADR-014: Jingle call leg (`pkg/jingleleg`), the shared leg API moves to `pkg/leg`
+
+**Status:** accepted, implementation landed (2026-…). Supersedes the *implementation* choice of
+ADR-001 for the jmpchat/JMP use case; ADR-001's SIP bridge remains for non-JMP providers.
+
+**Context.** ADR-001 chose SIP over Jingle because "Jingle adds ICE, DTLS-SRTP and negotiation on
+top of the media endpoint". In practice: JMP/Cheogram's *primary* calling path is native Jingle
+("any client that supports Jingle calling should work"; SIP is opt-in "for advanced use cases"), a
+Jingle call runs against the same Cheogram JID the portals already use (no SIP credentials, no
+REGISTER keepalive, no registrar pinning), and pion/webrtc (already a dependency via `pkg/rtc`)
+absorbs ICE and DTLS-SRTP. The media path also simplifies: both legs are Opus/WebRTC, so G.711
+plus 8 kHz resampling disappear from that leg. ADR-001's revisit condition ("a mature Go Jingle
+stack appears") is still not met — there is none; `pkg/jingleleg` *is* the Jingle stack, scoped to
+what calls need (XEP-0166/0167/0176/0338/0339 + XEP-0353 JMI).
+
+**Decision.**
+1. The phone-leg call API (CallEvent, InboundCall, OutboundCall, DialRequest, UA, State) moves to
+   **`pkg/leg`**. `pkg/sipua` re-exports it under its historical names (alias.go), so `pkg/calls`
+   and both hosts are unchanged.
+2. **`pkg/jingleleg`** implements `leg.UA`/`InboundCall`/`OutboundCall` for XMPP Jingle: Jingle
+   XML + JMI handling, the session state machines, and a pion-backed `Engine` (WebRTC audio
+   presented as PCMU 20 ms frames to the `pkg/media` bridge via `media.OpusPCMU`).
+3. The package is **transport-agnostic**: it owns no XMPP connection. The host forwards Jingle
+   `<iq>` and JMI `<message>` payloads via `HandleIQ`/`HandleMessage` and implements
+   `jingleleg.Transport` on its own session. That is what keeps the jmpchat-matrix-bridge fork
+   delta to a stanza shim (the fork is maintained against upstream, so its diff stays minimal).
+4. `pkg/calls` needs no changes beyond the inbound codec check accepting Opus offers
+   (`Offer.Opus`) alongside PCMU. The whole ring/answer/teardown/membership machinery, the
+   MatrixRTC side, the widget/PWA and both hosts are reused as-is.
+5. Both flows are accepted inbound (JMI propose-first per XEP-0353 §2, and direct
+   session-initiate); outbound defaults to propose-first (`Config.ProposeFirst=false` selects
+   direct). Which flow Cheogram's call gateway uses is **unverified** and is the first live-test
+   item (docs/RESEARCH.md).
+
+**Mapping (Jingle ⇄ call core).** propose→invite/ring, proceed→183 (EventProvisional),
+session-accept→EventAnswered, session-info/ringing→180, session-terminate reasons→EndCause
+(success→remote_bye, cancel→cancelled, decline/busy→remote_rejected/failed statuses),
+JMI reject→EndRemoteRejected, retract→EndCancelled, finish→EndRemoteBye, and JMI
+accept/proceed/reject from one of *our own* resources→"answered/declined on another device".
+DTMF: outbound as RFC 4733 telephone-event RTP (a custom `TrackLocal` preserves per-packet
+payload types; pion's `TrackLocalStaticRTP` would rewrite them); inbound telephone-event packets
+are dropped (in-band DTMF from the far end is not converted).
+
+**Consequences / costs.**
+- The Jingle dialect of Cheogram must be validated live (spike): JMI vs direct initiate,
+  transport (ICE-UDP + DTLS), codec set, and the exact proceed/accept behaviour. The session
+  machines are dialect-tolerant by design (both flows accepted) and `Engine` isolates all media.
+- In-band-only media quality is telephone-grade by construction (Opus ⇄ PCMU at 8 kHz through
+  the unchanged `media` bridge). A future `media.Config` Opus-passthrough mode can remove the
+  double transcode; not needed for PSTN-grade calls.
+- Inbound DTMF (remote → owner) is not relayed; add tone detection later if a use case appears.
+- With Jingle there is no "sole registered contact": a user's other Jabber resources ring for the
+  same call and the first `proceed` wins at the gateway. The leg tears its call down on
+  "answered elsewhere" JMI. The standalone SIP bridge keeps ADR-001 behaviour for non-JMP SIP.
+- Failure domain: the leg runs inside the chat bridge's process (embedded host). `internal/
+  importcheck` confinement keeps pion/opus out of everything but their designated packages.
+
+**Would revisit if:** a real Go Jingle library appears (then swap the XML layer), Cheogram's
+dialect turns out hostile to this mapping (then fall back to the SIP path, which stays supported),
+or JMP drops Jingle calling.

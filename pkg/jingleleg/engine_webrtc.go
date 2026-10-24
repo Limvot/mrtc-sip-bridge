@@ -1,0 +1,388 @@
+package jingleleg
+
+// The production Engine: a pion/webrtc PeerConnection carrying Opus audio towards the peer,
+// presented as PCMU 20 ms frames to the pkg/media bridge via pkg/media.OpusPCMU. DTMF rides as
+// RFC 4733 telephone-event RTP on the same SSRC (a custom TrackLocal preserves the payload
+// type per packet, which TrackLocalStaticRTP would rewrite to the bound codec's).
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"sync"
+	"time"
+
+	"github.com/pion/rtp"
+	"github.com/pion/webrtc/v4"
+	"github.com/rs/zerolog"
+
+	"github.com/williamkray/mrtc-sip-bridge/pkg/media"
+)
+
+// WebRTCEngineConfig configures the pion-backed engine.
+type WebRTCEngineConfig struct {
+	// ICEServers are STUN/TURN URLs ("stun:host:port"); empty = host candidates only.
+	ICEServers []string
+	Log        zerolog.Logger
+}
+
+// Default telephone-event payload type we advertise alongside Opus (RFC 4733 dynamic PT).
+const defaultTelephoneEventPT = 101
+
+// NewWebRTCEngine returns an EngineFactory building pion-backed engines.
+func NewWebRTCEngine(cfg WebRTCEngineConfig) EngineFactory {
+	return func() (Engine, error) { return newWebRTCEngine(cfg) }
+}
+
+type webRTCEngine struct {
+	cfg   WebRTCEngineConfig
+	pc    *webrtc.PeerConnection
+	track *mixedPTTrack
+	trans *media.OpusPCMU
+
+	opusPT uint8
+	tePT   uint8
+	teOK   bool
+
+	seq uint16
+	ts  uint32
+
+	recv      chan *media.RTPPacket
+	closed    chan struct{}
+	closeOnce sync.Once
+	localRTP  string
+	remoteRTP string
+}
+
+var _ Engine = (*webRTCEngine)(nil)
+
+func newWebRTCEngine(cfg WebRTCEngineConfig) (*webRTCEngine, error) {
+	m := &webrtc.MediaEngine{}
+	if err := m.RegisterDefaultCodecs(); err != nil {
+		return nil, err
+	}
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(m))
+	var servers []webrtc.ICEServer
+	if len(cfg.ICEServers) > 0 {
+		servers = []webrtc.ICEServer{{URLs: cfg.ICEServers}}
+	}
+	pc, err := api.NewPeerConnection(webrtc.Configuration{ICEServers: servers})
+	if err != nil {
+		return nil, err
+	}
+	trans, err := media.NewOpusPCMU()
+	if err != nil {
+		_ = pc.Close()
+		return nil, err
+	}
+	e := &webRTCEngine{
+		cfg:    cfg,
+		pc:     pc,
+		track:  newMixedPTTrack("audio", "jmpcall"),
+		trans:  trans,
+		opusPT: 111,
+		tePT:   defaultTelephoneEventPT,
+		recv:   make(chan *media.RTPPacket, 64),
+		closed: make(chan struct{}),
+	}
+	if _, err := pc.AddTrack(e.track); err != nil {
+		_ = pc.Close()
+		return nil, err
+	}
+	pc.OnTrack(func(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+		e.readLoop(tr)
+	})
+	return e, nil
+}
+
+// readLoop transcodes the remote Opus stream into PCMU frames for the media bridge.
+func (e *webRTCEngine) readLoop(tr *webrtc.TrackRemote) {
+	for {
+		pkt, _, err := tr.ReadRTP()
+		if err != nil {
+			e.Close()
+			return
+		}
+		if pkt.PayloadType == e.tePT {
+			continue // inbound DTMF events are dropped (outbound DTMF is RFC 4733; see docs)
+		}
+		frames, err := e.trans.OpusToPCMU(pkt.Payload)
+		if err != nil {
+			continue
+		}
+		for _, f := range frames {
+			p := &media.RTPPacket{
+				SSRC:        pkt.SSRC,
+				Seq:         pkt.SequenceNumber,
+				Timestamp:   pkt.Timestamp,
+				PayloadType: media.PayloadPCMU,
+				Marker:      false,
+				Payload:     f,
+			}
+			select {
+			case e.recv <- p:
+			case <-e.closed:
+				return
+			default:
+				// overflow: drop (the bridge's jitter buffer tolerates gaps)
+			}
+		}
+	}
+}
+
+// Accept implements Engine (responder role).
+func (e *webRTCEngine) Accept(remote *Jingle) (*Description, *JingleTransport, error) {
+	d := remote.AudioDescription()
+	if d == nil {
+		return nil, nil, fmt.Errorf("jingleleg: no audio description")
+	}
+	e.noteCodecs(d)
+	if tr := remote.AudioTransport(); tr != nil && len(tr.Candidates) > 0 {
+		c := tr.Candidates[0]
+		e.remoteRTP = fmt.Sprintf("%s:%d", c.IP, c.Port)
+	}
+	offer, err := sdpFromJingle(stripTelephoneEvent(remote), "offer")
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := e.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offer}); err != nil {
+		return nil, nil, err
+	}
+	answer, err := e.pc.CreateAnswer(nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := e.pc.SetLocalDescription(answer); err != nil {
+		return nil, nil, err
+	}
+	<-webrtc.GatheringCompletePromise(e.pc)
+	return e.localJingle()
+}
+
+// Offer implements Engine (initiator role).
+func (e *webRTCEngine) Offer() (*Description, *JingleTransport, error) {
+	offer, err := e.pc.CreateOffer(nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := e.pc.SetLocalDescription(offer); err != nil {
+		return nil, nil, err
+	}
+	<-webrtc.GatheringCompletePromise(e.pc)
+	return e.localJingle()
+}
+
+// SetRemoteAnswer implements Engine (initiator role).
+func (e *webRTCEngine) SetRemoteAnswer(remote *Jingle) error {
+	d := remote.AudioDescription()
+	if d == nil {
+		return fmt.Errorf("jingleleg: no audio description in answer")
+	}
+	e.noteCodecs(d)
+	sdp, err := sdpFromJingle(stripTelephoneEvent(remote), "answer")
+	if err != nil {
+		return err
+	}
+	return e.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: sdp})
+}
+
+// localJingle turns our gathered local SDP into a Jingle description + transport, and keeps the
+// ICE candidates as the "selected pair" approximation for logs.
+func (e *webRTCEngine) localJingle() (*Description, *JingleTransport, error) {
+	sdp := e.pc.LocalDescription()
+	if sdp == nil {
+		return nil, nil, fmt.Errorf("jingleleg: no local description")
+	}
+	desc, tr, err := jingleFromSDP(sdp.SDP)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Advertise telephone-event alongside Opus (pion does not negotiate it).
+	desc.PayloadTypes = append(desc.PayloadTypes, PayloadType{
+		ID: e.tePT, Name: "telephone-event", ClockRate: 8000,
+	})
+	if len(tr.Candidates) > 0 {
+		c := tr.Candidates[0]
+		e.localRTP = fmt.Sprintf("%s:%d", c.IP, c.Port)
+	}
+	return desc, tr, nil
+}
+
+// noteCodecs records the peer's Opus and telephone-event payload types.
+func (e *webRTCEngine) noteCodecs(d *Description) {
+	for _, pt := range d.PayloadTypes {
+		switch {
+		case equalFold(pt.Name, "opus"):
+			e.opusPT = pt.ID
+		case equalFold(pt.Name, "telephone-event"):
+			e.tePT = pt.ID
+			e.teOK = true
+		}
+	}
+}
+
+// ReadRTP implements media.SIPLeg: one PCMU frame per call, io.EOF after close.
+func (e *webRTCEngine) ReadRTP(p *media.RTPPacket) error {
+	select {
+	case pkt, ok := <-e.recv:
+		if !ok {
+			return io.EOF
+		}
+		*p = *pkt
+		return nil
+	case <-e.closed:
+		return io.EOF
+	}
+}
+
+// WriteRTP implements media.SIPLeg: one PCMU frame in, one Opus packet out.
+func (e *webRTCEngine) WriteRTP(payload []byte, samples uint32, marker bool) error {
+	pkt, err := e.trans.PCMUToOpus(payload)
+	if err != nil {
+		return err
+	}
+	ts := e.ts
+	seq := e.seq
+	e.ts += samples * 6 // 8 kHz media clock towards the 48 kHz Opus RTP clock
+	e.seq++
+	return e.track.WritePacket(e.opusPT, pkt, ts, seq, marker)
+}
+
+// TelephoneEventPT implements media.SIPEventLeg.
+func (e *webRTCEngine) TelephoneEventPT() (uint8, bool) { return e.tePT, e.teOK }
+
+// WriteEvent implements media.SIPEventLeg: one RFC 4733 telephone-event packet.
+func (e *webRTCEngine) WriteEvent(payload []byte, samples uint32, marker bool) error {
+	if !e.teOK {
+		return media.ErrDTMFUnsupported
+	}
+	ts := e.ts
+	seq := e.seq
+	e.ts += samples * 6
+	e.seq++
+	return e.track.WritePacket(e.tePT, payload, ts, seq, marker)
+}
+
+// SelectedPair implements Engine (approximation from the gathered candidates; logs only).
+func (e *webRTCEngine) SelectedPair() (string, string) { return e.localRTP, e.remoteRTP }
+
+// Close implements Engine. Idempotent.
+func (e *webRTCEngine) Close() error {
+	e.closeOnce.Do(func() {
+		close(e.closed)
+		_ = e.pc.Close()
+	})
+	return nil
+}
+
+// --- custom TrackLocal preserving per-packet payload types ---
+
+type mixedPTTrack struct {
+	id, streamID string
+
+	mu    sync.Mutex
+	w     webrtc.TrackLocalWriter
+	ssrc  webrtc.SSRC
+	codec webrtc.RTPCodecParameters
+	bound bool
+}
+
+func newMixedPTTrack(id, streamID string) *mixedPTTrack {
+	return &mixedPTTrack{id: id, streamID: streamID}
+}
+
+var _ webrtc.TrackLocal = (*mixedPTTrack)(nil)
+
+func (t *mixedPTTrack) Bind(ctx webrtc.TrackLocalContext) (webrtc.RTPCodecParameters, error) {
+	codecs := ctx.CodecParameters()
+	if len(codecs) == 0 {
+		return webrtc.RTPCodecParameters{}, errors.New("jingleleg: no negotiated codec")
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.w = ctx.WriteStream()
+	t.ssrc = ctx.SSRC()
+	t.codec = codecs[0]
+	t.bound = true
+	return codecs[0], nil
+}
+
+func (t *mixedPTTrack) Unbind(webrtc.TrackLocalContext) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.bound = false
+	t.w = nil
+	return nil
+}
+
+func (t *mixedPTTrack) ID() string                { return t.id }
+func (t *mixedPTTrack) RID() string               { return "" }
+func (t *mixedPTTrack) StreamID() string          { return t.streamID }
+func (t *mixedPTTrack) Kind() webrtc.RTPCodecType { return webrtc.RTPCodecTypeAudio }
+
+// WritePacket writes one RTP packet with the given payload type (audio or telephone-event).
+func (t *mixedPTTrack) WritePacket(pt uint8, payload []byte, ts uint32, seq uint16, marker bool) error {
+	t.mu.Lock()
+	w, ssrc, bound := t.w, t.ssrc, t.bound
+	t.mu.Unlock()
+	if !bound {
+		return errors.New("jingleleg: track not bound")
+	}
+	h := rtp.Header{
+		Version:        2,
+		PayloadType:    pt,
+		SSRC:           uint32(ssrc),
+		SequenceNumber: seq,
+		Timestamp:      ts,
+		Marker:         marker,
+	}
+	_, err := w.WriteRTP(&h, payload)
+	return err
+}
+
+// --- small helpers ---
+
+func equalFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		ca, cb := a[i], b[i]
+		if 'A' <= ca && ca <= 'Z' {
+			ca += 'a' - 'A'
+		}
+		if 'A' <= cb && cb <= 'Z' {
+			cb += 'a' - 'A'
+		}
+		if ca != cb {
+			return false
+		}
+	}
+	return true
+}
+
+// stripTelephoneEvent removes telephone-event payload types: pion only negotiates registered
+// codecs, and DTMF PT is carried implicitly (we advertise it back in localJingle).
+func stripTelephoneEvent(j *Jingle) *Jingle {
+	out := *j
+	out.Contents = make([]Content, len(j.Contents))
+	copy(out.Contents, j.Contents)
+	for i := range out.Contents {
+		if out.Contents[i].Description == nil {
+			continue
+		}
+		d := *out.Contents[i].Description
+		var pts []PayloadType
+		for _, pt := range d.PayloadTypes {
+			if !equalFold(pt.Name, "telephone-event") {
+				pts = append(pts, pt)
+			}
+		}
+		d.PayloadTypes = pts
+		out.Contents[i].Description = &d
+	}
+	return &out
+}
+
+// ensure time is referenced even if config fields change.
+var _ = time.Now

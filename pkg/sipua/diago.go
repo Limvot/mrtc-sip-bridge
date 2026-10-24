@@ -24,22 +24,10 @@ import (
 	"github.com/williamkray/mrtc-sip-bridge/pkg/phone"
 )
 
-// UA is one registered SIP account.
-type UA interface {
-	// Start binds the SIP socket synchronously (bind errors are returned), then registers and keeps the
-	// registration alive in a background goroutine until Stop. Calling Start twice, or after Stop, returns an error.
-	Start(ctx context.Context) error
-	// Stop is idempotent. It stops the register loop, then, if the UA was registered at any point since
-	// its last successful full REGISTER, unregisters OUR Contact only (bounded by ctx), closes the
-	// socket and emits StateStopped. A stopped UA cannot be started again.
-	// Returns the unregister error, if any (the UA is stopped regardless).
-	Stop(ctx context.Context) error
-	// State returns the latest StateEvent (StateIdle before Start).
-	State() StateEvent
-	// Dial starts an outbound call from this account and returns immediately (the INVITE is sent on
-	// the call's own goroutine). Errors: ErrNotRegistered; invalid Target; UA not started or stopped.
-	Dial(req DialRequest) (OutboundCall, error)
-}
+// UA is one registered SIP account (the interface itself lives in pkg/leg and is re-exported
+// from alias.go, ADR-014; the SIP semantics are: Start binds the SIP socket and registers,
+// keeping the registration alive until Stop, which unregisters OUR Contact only; Dial sends
+// the INVITE on the call's own goroutine and returns ErrNotRegistered when not registered).
 
 // SetLibraryLogger routes sipgo's package-level logging through log, capped at Warn (D21), so raw SIP
 // never reaches stderr. Call once at startup.

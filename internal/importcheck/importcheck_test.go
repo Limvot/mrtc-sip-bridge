@@ -48,27 +48,32 @@ var allowedMautrix = map[string]bool{
 	"maunium.net/go/mautrix/event": true,
 }
 
-// confined maps a library import prefix to the only core package directory (directly under pkg/)
-// allowed to import it (ADR-009, PHASE2-SPEC D2). The longest matching prefix wins.
-var confined = []struct{ Prefix, Dir string }{
-	{"github.com/emiago/", "sipua"},
-	{"github.com/pion/stun/", "sipua"},
-	{"github.com/pion/", "rtc"},
-	{"github.com/livekit/", "rtc"},
-	{"gopkg.in/hraban/opus", "media"},
+// confined maps a library import prefix to the core package directories (directly under pkg/)
+// allowed to import it (ADR-009, PHASE2-SPEC D2; extended for the Jingle leg in ADR-014: pion
+// serves both the LiveKit side (rtc) and the Jingle WebRTC engine (jingleleg)). The longest
+// matching prefix wins.
+var confined = []struct {
+	Prefix string
+	Dirs   []string
+}{
+	{"github.com/emiago/", []string{"sipua"}},
+	{"github.com/pion/stun/", []string{"sipua"}},
+	{"github.com/pion/", []string{"rtc", "jingleleg"}},
+	{"github.com/livekit/", []string{"rtc"}},
+	{"gopkg.in/hraban/opus", []string{"media"}},
 }
 
 type violation struct{ File, Import string }
 
-// confinedTo returns the only package directory allowed to import path, if path is a confined library.
-func confinedTo(path string) (dir string, ok bool) {
+// confinedTo returns the package directories allowed to import path, if path is a confined library.
+func confinedTo(path string) (dirs []string, ok bool) {
 	best := -1
 	for _, c := range confined {
 		if strings.HasPrefix(path, c.Prefix) && len(c.Prefix) > best {
-			best, dir, ok = len(c.Prefix), c.Dir, true
+			best, dirs, ok = len(c.Prefix), c.Dirs, true
 		}
 	}
-	return dir, ok
+	return dirs, ok
 }
 
 // isForbidden reports whether a core package may not import path.
@@ -88,6 +93,16 @@ func isForbidden(path string) bool {
 func inPkgDir(root, file, dir string) bool {
 	rel, err := filepath.Rel(root, file)
 	return err == nil && strings.HasPrefix(filepath.ToSlash(rel), dir+"/")
+}
+
+// inAnyPkgDir reports whether file is inside any of the allowed package directories.
+func inAnyPkgDir(root, file string, dirs []string) bool {
+	for _, d := range dirs {
+		if inPkgDir(root, file, d) {
+			return true
+		}
+	}
+	return false
 }
 
 // hostOnlyDirs are host-side packages directly under root that are not core packages and are skipped:
@@ -134,7 +149,7 @@ func checkDir(root string) ([]violation, error) {
 				return err
 			}
 			outsideConfinement := false
-			if dir, ok := confinedTo(p); ok && !inPkgDir(root, path, dir) {
+			if dirs, ok := confinedTo(p); ok && !inAnyPkgDir(root, path, dirs) {
 				outsideConfinement = true
 			}
 			if isForbidden(p) || outsideConfinement {

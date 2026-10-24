@@ -7,6 +7,14 @@ first. Update the checkboxes and the "Current state" section as work lands, so t
 
 ## Current state
 
+- **Jingle call leg (ADR-014) implemented** in `pkg/jingleleg` + shared leg API in `pkg/leg`
+  (sipua re-exports it): Jingle XML (XEP-0166/0167/0176/0338/0339) + JMI (XEP-0353), session
+  state machines mapped onto the leg.CallEvent model, a pion WebRTC `Engine` (Jingle⇄SDP mapping,
+  Opus⇄PCMU via `media.OpusPCMU`, RFC 4733 DTMF out), unit + pion loopback tests. `pkg/calls`
+  gained only the Opus offer acceptance (`Offer.Opus`). The embedded-host wiring in
+  jmpchat-matrix-bridge (stanza shim + `calls.transport: jingle`) is the remaining piece; the
+  Cheogram Jingle dialect still needs one live validation pass (RESEARCH.md).
+
 - Phase 0 (spikes), Phase 1 (skeleton), Phase 2 (inbound calls), Phase 3 (outbound calls, DTMF) and
   Phase J (embedding in mautrix-jabber) are implemented and were validated against a live JMP account
   and a Synapse/LiveKit deployment: inbound and outbound calls, DTMF, decline and ring-out, and

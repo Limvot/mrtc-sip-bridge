@@ -80,10 +80,10 @@ func (c *call) setup() bool {
 		return false
 	}
 
-	// 4. Offer must contain PCMU.
-	if !c.info.Offer.HasSDP || !c.info.Offer.PCMU {
+	// 4. Offer must contain an audio codec we can bridge: PCMU (SIP legs) or Opus (Jingle legs).
+	if !c.info.Offer.HasSDP || (!c.info.Offer.PCMU && !c.info.Offer.Opus) {
 		c.logFor(ctx).Info().Str("from", e164).Bool("has_sdp", c.info.Offer.HasSDP).
-			Strs("offered_codecs", c.info.Offer.Codecs).Msg("Rejected inbound call: no PCMU offered")
+			Strs("offered_codecs", c.info.Offer.Codecs).Msg("Rejected inbound call: no PCMU or Opus offered")
 		c.reject(488, "Not Acceptable Here")
 		c.resolveRoomBestEffort(ctx)
 		c.fail(failSpec{outcome: outcomeRejected, reason: reasonRejected, notice: noticeCodec})
