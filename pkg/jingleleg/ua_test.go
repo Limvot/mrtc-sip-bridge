@@ -485,3 +485,42 @@ func TestInboundProposeOfferAcceptable(t *testing.T) {
 		}
 	}
 }
+
+// TestInboundProposeAnswerCalleeInitiates pins the Cheogram call flow: after proceed the
+// gateway never sends session-initiate, so Answer must initiate the Jingle session itself and
+// complete on the peer's session-accept (regression: answered calls with dead air while the
+// far end kept ringing).
+func TestInboundProposeAnswerCalleeInitiates(t *testing.T) {
+	h := newHarness(t, true)
+	propose := mustJMI(JMI{Action: JMIPropose, ID: "sid1", Descriptions: []Description{{Media: "audio"}}})
+	h.ua.HandleMessage(context.Background(), "+15550001111@cheogram.com", "chat", "m1", propose)
+	call := h.waitInvite(t)
+	call.Answer()
+	if st, ok := h.tp.last("proceed"); !ok || st.kind != "message" {
+		t.Fatalf("proceed not sent: %+v", h.tp.sent)
+	}
+	if h.tp.count("session-initiate") != 1 {
+		t.Fatalf("Answer must initiate the Jingle session: %+v", h.tp.sent)
+	}
+	// The gateway answers our initiate.
+	h.ua.HandleIQ(context.Background(), "+15550001111@cheogram.com", "set", "iq1", remoteAnswer("sid1"))
+	ev := waitEvent(t, call.Events(), leg.EventAnswered)
+	if ev.Media == nil {
+		t.Fatal("no media leg on answer")
+	}
+}
+
+// TestInboundGlarePeerInitiates covers the competing session-initiate case: if the gateway
+// initiates after proceed anyway, we answer its offer instead of deadlocking.
+func TestInboundGlarePeerInitiates(t *testing.T) {
+	h := newHarness(t, true)
+	propose := mustJMI(JMI{Action: JMIPropose, ID: "sid1", Descriptions: []Description{{Media: "audio"}}})
+	h.ua.HandleMessage(context.Background(), "+15550001111@cheogram.com", "chat", "m1", propose)
+	call := h.waitInvite(t)
+	call.Answer()
+	h.ua.HandleIQ(context.Background(), "+15550001111@cheogram.com", "set", "iq1", remoteOffer("sid1"))
+	if _, ok := h.tp.last("session-accept"); !ok {
+		t.Fatalf("peer initiate must be answered: %+v", h.tp.sent)
+	}
+	waitEvent(t, call.Events(), leg.EventAnswered)
+}

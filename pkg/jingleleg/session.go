@@ -64,6 +64,9 @@ type callCore struct {
 	dial     leg.DialRequest
 	dialInfo leg.DialInfo
 
+	// sentOffer is set once we sent session-initiate (outbound dial, or inbound callee-initiate).
+	sentOffer bool
+
 	engine Engine
 	events chan leg.CallEvent
 	ended  bool
@@ -145,8 +148,10 @@ func (c *Inbound) Ringing() {
 	c.sendSessionInfo(c.sid, "ringing")
 }
 
-// Answer accepts the call: JMI proceed when only a propose exists, session-accept when a
-// session-initiate is pending, both when they overlap.
+// Answer accepts the call: JMI proceed plus a callee-initiated Jingle session when only a
+// propose exists (XEP-0353 callers initiate after proceed in theory; Cheogram's gateway does
+// not, so we initiate ourselves and answer a competing session-initiate if one arrives),
+// session-accept when a session-initiate is already pending.
 func (c *Inbound) Answer() {
 	c.mu.Lock()
 	switch c.state {
@@ -154,14 +159,17 @@ func (c *Inbound) Answer() {
 		c.mu.Unlock()
 		return
 	case stProposed:
-		c.state = stProceeding
 		sid, peer := c.sid, c.peerFull
 		c.mu.Unlock()
 		_ = c.u.transport.SendMessage(context.Background(), peer, "chat", sid, mustJMI(JMI{Action: JMIProceed, ID: sid}))
+		c.startOffer()
 	case stOffered:
+		initiated := c.sentOffer
 		c.mu.Unlock()
-		c.acceptNow()
-	default: // stProceeding: the session-initiate handler answers; stAccepted: done
+		if !initiated {
+			c.acceptNow()
+		}
+	default: // stProceeding/stAccepted: the session handler finishes it
 		c.mu.Unlock()
 	}
 }
@@ -266,10 +274,13 @@ func (c *callCore) onSessionInitiate(j *Jingle, peerFull string) {
 			Codecs:           codecs,
 		}
 	}
+	glare := c.sentOffer
 	c.info.RemoteAddr = c.peerFull
 	c.mu.Unlock()
 
-	if proceeding {
+	if proceeding || glare {
+		// Answer the peer's session-initiate: theirs is the authoritative offer (glare
+		// resolution when both sides initiated; the plain case when we waited for it).
 		c.acceptNow()
 	}
 }
@@ -445,6 +456,7 @@ func (c *callCore) startOffer() {
 		return
 	}
 	c.mu.Lock()
+	c.sentOffer = true
 	if c.state == stProposed {
 		c.state = stOffered
 	}
