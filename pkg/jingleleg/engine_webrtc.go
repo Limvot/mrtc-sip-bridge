@@ -21,8 +21,17 @@ import (
 
 // WebRTCEngineConfig configures the pion-backed engine.
 type WebRTCEngineConfig struct {
-	// ICEServers are STUN/TURN URLs ("stun:host:port"); empty = host candidates only.
+	// ICEServers are STUN/TURN URLs ("stun:host:port" or "turn:host:port"); empty = host
+	// candidates only.
 	ICEServers []string
+	// PortMin/PortMax bound the local UDP ports for media (0 = ephemeral). Set these to a
+	// range the firewall opens towards the world.
+	PortMin uint16
+	PortMax uint16
+	// ExternalIP, when set, advertises this address for every host candidate instead of the
+	// machine's own (NAT1To1): the usual setup for a server behind 1:1 NAT or a firewall that
+	// only opens a fixed UDP range.
+	ExternalIP string
 	Log        zerolog.Logger
 }
 
@@ -61,7 +70,16 @@ func newWebRTCEngine(cfg WebRTCEngineConfig) (*webRTCEngine, error) {
 	if err := m.RegisterDefaultCodecs(); err != nil {
 		return nil, err
 	}
-	api := webrtc.NewAPI(webrtc.WithMediaEngine(m))
+	se := webrtc.SettingEngine{}
+	if cfg.PortMin > 0 && cfg.PortMax >= cfg.PortMin {
+		if err := se.SetEphemeralUDPPortRange(cfg.PortMin, cfg.PortMax); err != nil {
+			return nil, err
+		}
+	}
+	if cfg.ExternalIP != "" {
+		se.SetNAT1To1IPs([]string{cfg.ExternalIP}, webrtc.ICECandidateTypeHost)
+	}
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithSettingEngine(se))
 	var servers []webrtc.ICEServer
 	if len(cfg.ICEServers) > 0 {
 		servers = []webrtc.ICEServer{{URLs: cfg.ICEServers}}
