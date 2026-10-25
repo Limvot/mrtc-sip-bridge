@@ -67,8 +67,11 @@ type Content struct {
 
 // Description is the RTP application description (XEP-0167).
 type Description struct {
-	XMLName      xml.Name      `xml:"urn:xmpp:jingle:apps:rtp:1 description"`
-	Media        string        `xml:"media,attr"`
+	XMLName xml.Name `xml:"urn:xmpp:jingle:apps:rtp:1 description"`
+	Media   string   `xml:"media,attr"`
+	// RTCPMux declares RFC 5761 RTP/RTCP multiplexing (we always mux; without the element
+	// peers read our muxed RTCP sender-reports as audio: periodic "blip blip blip").
+	RTCPMux      bool          `xml:"rtcp-mux,omitempty"`
 	SSRC         uint32        `xml:"ssrc,attr,omitempty"`
 	PayloadTypes []PayloadType `xml:"payload-type"`
 	Sources      []Source      `xml:"source"`

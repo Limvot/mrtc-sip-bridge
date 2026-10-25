@@ -223,6 +223,8 @@ func (u *UA) HandleMessage(ctx context.Context, from, msgType, id string, payloa
 // one of our own resources (XEP-0280), which drive the "answered/declined on another device"
 // paths. handled=false means the action is not ours.
 func (u *UA) HandleJMI(ctx context.Context, from string, fromSelf bool, j JMI) (handled bool) {
+	u.log.Debug().Str("from", from).Bool("from_self", fromSelf).Str("action", j.Action).Str("sid", j.ID).
+		Msg("Jingle JMI")
 	switch j.Action {
 	case JMIPropose, JMIAccept, JMIProceed, JMIReject, JMIRetract, JMIFinish:
 	default:

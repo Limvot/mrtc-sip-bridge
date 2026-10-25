@@ -58,6 +58,11 @@ type webRTCEngine struct {
 	seq uint16
 	ts  uint32
 
+	mu        sync.Mutex
+	remoteSet bool
+	pending   []Candidate
+	txLogged  int
+
 	recv      chan *media.RTPPacket
 	closed    chan struct{}
 	closeOnce sync.Once
@@ -73,6 +78,9 @@ func newWebRTCEngine(cfg WebRTCEngineConfig) (*webRTCEngine, error) {
 		return nil, err
 	}
 	se := webrtc.SettingEngine{}
+	// IPv4 only: the gateway's candidates are IPv4, and stray IPv6 candidates make remote
+	// stacks pick unreachable pairs first.
+	se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
 	if cfg.PortMin > 0 && cfg.PortMax >= cfg.PortMin {
 		if err := se.SetEphemeralUDPPortRange(cfg.PortMin, cfg.PortMax); err != nil {
 			return nil, err
@@ -182,6 +190,7 @@ func (e *webRTCEngine) Accept(remote *Jingle) (*Description, *JingleTransport, e
 	if err := e.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offer}); err != nil {
 		return nil, nil, err
 	}
+	e.flushPending()
 	answer, err := e.pc.CreateAnswer(nil)
 	if err != nil {
 		return nil, nil, err
@@ -217,7 +226,23 @@ func (e *webRTCEngine) SetRemoteAnswer(remote *Jingle) error {
 	if err != nil {
 		return err
 	}
-	return e.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: sdp})
+	if err := e.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: sdp}); err != nil {
+		return err
+	}
+	e.flushPending()
+	return nil
+}
+
+// flushPending applies queued trickled candidates once the remote description exists.
+func (e *webRTCEngine) flushPending() {
+	e.mu.Lock()
+	e.remoteSet = true
+	pending := e.pending
+	e.pending = nil
+	e.mu.Unlock()
+	if len(pending) > 0 {
+		_ = e.addCandidates(pending)
+	}
 }
 
 // localJingle turns our gathered local SDP into a Jingle description + transport, and keeps the
@@ -248,6 +273,14 @@ func (e *webRTCEngine) localJingle() (*Description, *JingleTransport, error) {
 		})
 	}
 	desc.PayloadTypes = pts
+	desc.RTCPMux = true
+	var cands []Candidate
+	for _, c := range tr.Candidates {
+		if c.Component == 1 {
+			cands = append(cands, c)
+		}
+	}
+	tr.Candidates = cands
 	if len(tr.Candidates) > 0 {
 		c := tr.Candidates[0]
 		e.localRTP = fmt.Sprintf("%s:%d", c.IP, c.Port)
@@ -313,6 +346,11 @@ func (e *webRTCEngine) WriteRTP(payload []byte, samples uint32, marker bool) err
 	}
 	e.ts += inc
 	e.seq++
+	if e.txLogged < 5 {
+		e.txLogged++
+		e.cfg.Log.Debug().Uint8("pt", e.audioPT).Uint16("seq", seq).Uint32("ts", ts).
+			Int("len", len(pkt)).Bool("pcmu", e.pcmuLeg).Msg("jingleleg: outgoing RTP")
+	}
 	return e.track.WritePacket(e.audioPT, pkt, ts, seq, marker)
 }
 
@@ -335,12 +373,25 @@ func (e *webRTCEngine) WriteEvent(payload []byte, samples uint32, marker bool) e
 	return e.track.WritePacket(e.tePT, payload, ts, seq, marker)
 }
 
-// AddRemoteTransport applies trickled ICE candidates from a <transport-info/>.
+// AddRemoteTransport applies trickled ICE candidates from a <transport-info/>. Candidates that
+// arrive before SetRemoteDescription/Accept are queued and applied afterwards (pion rejects
+// them with InvalidStateError otherwise).
 func (e *webRTCEngine) AddRemoteTransport(tr *JingleTransport) error {
 	if tr == nil {
 		return nil
 	}
-	for _, c := range tr.Candidates {
+	e.mu.Lock()
+	if !e.remoteSet {
+		e.pending = append(e.pending, tr.Candidates...)
+		e.mu.Unlock()
+		return nil
+	}
+	e.mu.Unlock()
+	return e.addCandidates(tr.Candidates)
+}
+
+func (e *webRTCEngine) addCandidates(cands []Candidate) error {
+	for _, c := range cands {
 		typ := webrtc.ICECandidateTypeHost
 		switch c.Type {
 		case "srflx":
