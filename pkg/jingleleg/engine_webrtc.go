@@ -125,6 +125,7 @@ func newWebRTCEngine(cfg WebRTCEngineConfig) (*webRTCEngine, error) {
 	pc.OnICEConnectionStateChange(func(st webrtc.ICEConnectionState) {
 		cfg.Log.Info().Str("ice_state", st.String()).Msg("jingleleg: ICE connection state")
 	})
+	go e.statsLoop()
 	pc.OnConnectionStateChange(func(st webrtc.PeerConnectionState) {
 		cfg.Log.Info().Str("pc_state", st.String()).Msg("jingleleg: peer connection state")
 	})
@@ -273,7 +274,7 @@ func (e *webRTCEngine) localJingle() (*Description, *JingleTransport, error) {
 		})
 	}
 	desc.PayloadTypes = pts
-	desc.RTCPMux = true
+	desc.RTCPMux = &EmptyElem{}
 	var cands []Candidate
 	for _, c := range tr.Candidates {
 		if c.Component == 1 {
@@ -357,6 +358,14 @@ func (e *webRTCEngine) WriteRTP(payload []byte, samples uint32, marker bool) err
 // TelephoneEventPT implements media.SIPEventLeg.
 func (e *webRTCEngine) TelephoneEventPT() (uint8, bool) { return e.tePT, e.teOK }
 
+// NegotiatedCodec returns the wire codec name ("PCMU" or "opus") for notices/logs.
+func (e *webRTCEngine) NegotiatedCodec() string {
+	if e.pcmuLeg {
+		return "PCMU"
+	}
+	return "opus"
+}
+
 // WriteEvent implements media.SIPEventLeg: one RFC 4733 telephone-event packet.
 func (e *webRTCEngine) WriteEvent(payload []byte, samples uint32, marker bool) error {
 	if !e.teOK {
@@ -371,6 +380,31 @@ func (e *webRTCEngine) WriteEvent(payload []byte, samples uint32, marker bool) e
 	e.ts += inc
 	e.seq++
 	return e.track.WritePacket(e.tePT, payload, ts, seq, marker)
+}
+
+// statsLoop logs RTP/ICE counters every 5s until close: the definitive view of which direction
+// media flows when a call "connects" but audio does not.
+func (e *webRTCEngine) statsLoop() {
+	t := time.NewTicker(5 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-e.closed:
+			return
+		case <-t.C:
+			var rxPackets, txPackets uint32
+			for _, st := range e.pc.GetStats() {
+				switch s := st.(type) {
+				case webrtc.InboundRTPStreamStats:
+					rxPackets += s.PacketsReceived
+				case webrtc.OutboundRTPStreamStats:
+					txPackets += s.PacketsSent
+				}
+			}
+			e.cfg.Log.Info().Uint32("rtp_rx", rxPackets).Uint32("rtp_tx", txPackets).
+				Str("codec", e.NegotiatedCodec()).Msg("jingleleg: media stats")
+		}
+	}
 }
 
 // AddRemoteTransport applies trickled ICE candidates from a <transport-info/>. Candidates that

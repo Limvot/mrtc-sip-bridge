@@ -314,7 +314,7 @@ func (c *callCore) onSessionAccept(j *Jingle) {
 		At:    now,
 		Media: eng,
 		Answer: leg.AnswerInfo{
-			Codec:            "Opus",
+			Codec:            c.engine.NegotiatedCodec(),
 			PtimeMS:          20,
 			TelephoneEvent:   teOK,
 			TelephoneEventPT: te,
@@ -495,7 +495,7 @@ func (c *callCore) startOffer() {
 		Initiator: c.u.cfg.LocalBare,
 		Contents: []Content{{
 			Creator:     "initiator",
-			Name:        "voice",
+			Name:        "audio", // XEP-0166 content names must match the peer's (Cheogram uses "audio")
 			Senders:     "both",
 			Description: desc,
 			Transport:   transport,
@@ -575,7 +575,7 @@ func (c *callCore) acceptNow() {
 		At:    now,
 		Media: c.engine,
 		Answer: leg.AnswerInfo{
-			Codec:            "Opus",
+			Codec:            c.engine.NegotiatedCodec(),
 			PtimeMS:          20,
 			TelephoneEvent:   teOK,
 			TelephoneEventPT: te,

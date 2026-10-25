@@ -71,12 +71,29 @@ type Description struct {
 	Media   string   `xml:"media,attr"`
 	// RTCPMux declares RFC 5761 RTP/RTCP multiplexing (we always mux; without the element
 	// peers read our muxed RTCP sender-reports as audio: periodic "blip blip blip").
-	RTCPMux      bool          `xml:"rtcp-mux,omitempty"`
+	// Marshalled as an empty element, never <rtcp-mux>true</rtcp-mux>.
+	RTCPMux      *EmptyElem    `xml:"rtcp-mux,omitempty"`
 	SSRC         uint32        `xml:"ssrc,attr,omitempty"`
 	PayloadTypes []PayloadType `xml:"payload-type"`
 	Sources      []Source      `xml:"source"`
 	SSRCGroups   []SSRCGroup   `xml:"ssrc-group"`
 	HDRExts      []HDRExt      `xml:"rtp-hdrext"`
+}
+
+// EmptyElem is an empty XML element used as a presence flag (e.g. <rtcp-mux/>).
+type EmptyElem struct{}
+
+// MarshalXML writes the element with no children.
+func (e EmptyElem) MarshalXML(enc *xml.Encoder, start xml.StartElement) error {
+	if err := enc.EncodeToken(start); err != nil {
+		return err
+	}
+	return enc.EncodeToken(xml.EndElement{Name: start.Name})
+}
+
+// UnmarshalXML consumes the element.
+func (e *EmptyElem) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	return d.Skip()
 }
 
 // PayloadType is one codec (XEP-0167).

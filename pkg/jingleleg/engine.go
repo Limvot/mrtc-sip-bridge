@@ -36,6 +36,8 @@ type Engine interface {
 	AddRemoteTransport(tr *JingleTransport) error
 	// SelectedPair returns the chosen ICE pair as "ip:port"/"ip:port" (logs only; "" if unknown).
 	SelectedPair() (local, remote string)
+	// NegotiatedCodec returns the wire codec name ("PCMU" or "opus").
+	NegotiatedCodec() string
 	// Close tears the engine down; ReadRTP returns io.EOF afterwards. Idempotent.
 	Close() error
 }
