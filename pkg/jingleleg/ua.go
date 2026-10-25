@@ -232,6 +232,12 @@ func (u *UA) HandleJMI(ctx context.Context, from string, fromSelf bool, j JMI) (
 	u.mu.Lock()
 	core := u.sessions[j.ID]
 	u.mu.Unlock()
+	// The gateway answers from its call resources (/tel, /sip:...): session stanzas must follow.
+	if core != nil && !fromOwn && strings.Contains(from, "/") && bareOf(from) == core.peerBare {
+		core.mu.Lock()
+		core.peerFull = from
+		core.mu.Unlock()
+	}
 
 	switch j.Action {
 	case JMIPropose:
@@ -314,7 +320,7 @@ func (u *UA) onPropose(j JMI, from string) {
 // handled=false means the payload was not a Jingle action (or not ours).
 func (u *UA) HandleIQ(ctx context.Context, from, iqType, id string, payload []byte) (handled bool) {
 	u.trace(ctx, "in", from, payload)
-	if iqType == "error" {
+	if iqType == "error" || looksLikeStanzaError(payload) {
 		return u.handleIQError(ctx, from, id, payload)
 	}
 	if iqType != "set" {
@@ -435,6 +441,20 @@ func (u *UA) handleIQError(ctx context.Context, from, id string, payload []byte)
 	}
 	core.end(leg.EndFailed, 500, "gateway error "+reason, nil)
 	return true
+}
+
+// looksLikeStanzaError reports whether the payload root element is <error> (jabber:client).
+func looksLikeStanzaError(payload []byte) bool {
+	trimmed := bytesTrimSpace(payload)
+	return len(trimmed) >= 6 && string(trimmed[:6]) == "<error"
+}
+
+// bytesTrimSpace trims ASCII whitespace.
+func bytesTrimSpace(b []byte) []byte {
+	for len(b) > 0 && (b[0] == ' ' || b[0] == '\n' || b[0] == '\r' || b[0] == '\t') {
+		b = b[1:]
+	}
+	return b
 }
 
 // parseStanzaError extracts the XMPP stanza error condition and text from an <error/> payload.

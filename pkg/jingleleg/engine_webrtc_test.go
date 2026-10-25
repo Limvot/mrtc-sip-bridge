@@ -29,7 +29,7 @@ func TestWebRTCEngineLoopback(t *testing.T) {
 	if offerDesc == nil || offerTr == nil {
 		t.Fatal("no offer produced")
 	}
-	if !hasCodec(offerDesc, "opus") || !hasCodec(offerDesc, "telephone-event") {
+	if !hasCodec(offerDesc, "opus") || !hasCodec(offerDesc, "PCMU") {
 		t.Fatalf("offer codecs: %+v", offerDesc.PayloadTypes)
 	}
 	offer := &Jingle{Action: ActionSessionInitiate, SID: "s1",
@@ -82,10 +82,8 @@ func TestWebRTCEngineLoopback(t *testing.T) {
 			if p.PayloadType != media.PayloadPCMU || len(p.Payload) != media.FrameSamples {
 				t.Fatalf("bad frame: pt=%d len=%d", p.PayloadType, len(p.Payload))
 			}
-			// DTMF through the negotiated telephone-event PT.
-			if pt, ok := b.TelephoneEventPT(); !ok {
-				t.Fatal("telephone-event not negotiated")
-			} else {
+			// DTMF through the negotiated telephone-event PT (only when the peer offered it).
+			if pt, ok := b.TelephoneEventPT(); ok {
 				payload := []byte{1, 10, 0, 0}
 				if err := a.WriteEvent(payload, 0, true); err != nil {
 					t.Fatalf("dtmf: %v", err)

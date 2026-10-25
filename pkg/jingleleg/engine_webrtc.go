@@ -49,9 +49,10 @@ type webRTCEngine struct {
 	track *mixedPTTrack
 	trans *media.OpusPCMU
 
-	opusPT uint8
-	tePT   uint8
-	teOK   bool
+	audioPT uint8 // negotiated audio payload type
+	pcmuLeg bool  // negotiated codec is PCMU (raw passthrough) instead of Opus (transcode)
+	tePT    uint8
+	teOK    bool
 
 	seq uint16
 	ts  uint32
@@ -94,14 +95,14 @@ func newWebRTCEngine(cfg WebRTCEngineConfig) (*webRTCEngine, error) {
 		return nil, err
 	}
 	e := &webRTCEngine{
-		cfg:    cfg,
-		pc:     pc,
-		track:  newMixedPTTrack("audio", "jmpcall"),
-		trans:  trans,
-		opusPT: 111,
-		tePT:   defaultTelephoneEventPT,
-		recv:   make(chan *media.RTPPacket, 64),
-		closed: make(chan struct{}),
+		cfg:     cfg,
+		pc:      pc,
+		track:   newMixedPTTrack("audio", "jmpcall"),
+		trans:   trans,
+		audioPT: 111,
+		tePT:    defaultTelephoneEventPT,
+		recv:    make(chan *media.RTPPacket, 64),
+		closed:  make(chan struct{}),
 	}
 	if _, err := pc.AddTrack(e.track); err != nil {
 		_ = pc.Close()
@@ -124,9 +125,15 @@ func (e *webRTCEngine) readLoop(tr *webrtc.TrackRemote) {
 		if pkt.PayloadType == e.tePT {
 			continue // inbound DTMF events are dropped (outbound DTMF is RFC 4733; see docs)
 		}
-		frames, err := e.trans.OpusToPCMU(pkt.Payload)
-		if err != nil {
-			continue
+		var frames [][]byte
+		if e.pcmuLeg {
+			frames = splitPCMU(pkt.Payload)
+		} else {
+			var err error
+			frames, err = e.trans.OpusToPCMU(pkt.Payload)
+			if err != nil {
+				continue
+			}
 		}
 		for _, f := range frames {
 			p := &media.RTPPacket{
@@ -215,21 +222,22 @@ func (e *webRTCEngine) localJingle() (*Description, *JingleTransport, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	// Advertise only what we actually bridge: Opus audio plus RFC 4733 telephone-event.
-	// pion's default codec set would otherwise leak PCMU/PCMA/G722 into the Jingle description.
+	// Advertise only what we actually bridge: PCMU (PSTN gateways reject Opus-only offers with
+	// <incompatible-parameters/>) and Opus. Everything else pion registers is dropped.
 	var pts []PayloadType
 	for _, pt := range desc.PayloadTypes {
-		if equalFold(pt.Name, "opus") {
+		if equalFold(pt.Name, "opus") || equalFold(pt.Name, "PCMU") {
 			pts = append(pts, pt)
 		}
 	}
 	if len(pts) == 0 {
-		return nil, nil, fmt.Errorf("jingleleg: local description has no opus")
+		return nil, nil, fmt.Errorf("jingleleg: local description has neither opus nor PCMU")
 	}
-	// Advertise telephone-event alongside Opus (pion does not negotiate it).
-	pts = append(pts, PayloadType{
-		ID: e.tePT, Name: "telephone-event", ClockRate: 8000,
-	})
+	if e.teOK {
+		pts = append(pts, PayloadType{
+			ID: e.tePT, Name: "telephone-event", ClockRate: 8000,
+		})
+	}
 	desc.PayloadTypes = pts
 	if len(tr.Candidates) > 0 {
 		c := tr.Candidates[0]
@@ -238,16 +246,28 @@ func (e *webRTCEngine) localJingle() (*Description, *JingleTransport, error) {
 	return desc, tr, nil
 }
 
-// noteCodecs records the peer's Opus and telephone-event payload types.
+// noteCodecs records the peer's audio and telephone-event payload types. PSTN gateways
+// (Cheogram's /tel) speak G.711 only and reject Opus offers with <incompatible-parameters/>,
+// so PCMU wins when present: the media bridge works in PCMU anyway, making that leg a passthrough.
 func (e *webRTCEngine) noteCodecs(d *Description) {
+	var opus, pcmu bool
+	var opusPT, pcmuPT uint8
 	for _, pt := range d.PayloadTypes {
 		switch {
 		case equalFold(pt.Name, "opus"):
-			e.opusPT = pt.ID
+			opus, opusPT = true, pt.ID
+		case equalFold(pt.Name, "PCMU"):
+			pcmu, pcmuPT = true, pt.ID
 		case equalFold(pt.Name, "telephone-event"):
 			e.tePT = pt.ID
 			e.teOK = true
 		}
+	}
+	switch {
+	case pcmu:
+		e.pcmuLeg, e.audioPT = true, pcmuPT
+	case opus:
+		e.pcmuLeg, e.audioPT = false, opusPT
 	}
 }
 
@@ -265,17 +285,22 @@ func (e *webRTCEngine) ReadRTP(p *media.RTPPacket) error {
 	}
 }
 
-// WriteRTP implements media.SIPLeg: one PCMU frame in, one Opus packet out.
+// WriteRTP implements media.SIPLeg: one PCMU frame in, one RTP packet out (Opus is transcoded,
+// PCMU passes through).
 func (e *webRTCEngine) WriteRTP(payload []byte, samples uint32, marker bool) error {
-	pkt, err := e.trans.PCMUToOpus(payload)
-	if err != nil {
-		return err
+	pkt := payload
+	if !e.pcmuLeg {
+		var err error
+		pkt, err = e.trans.PCMUToOpus(payload)
+		if err != nil {
+			return err
+		}
 	}
 	ts := e.ts
 	seq := e.seq
-	e.ts += samples * 6 // 8 kHz media clock towards the 48 kHz Opus RTP clock
+	e.ts += samples * 6 // 8 kHz media clock towards the 48 kHz RTP clock (Opus) / PCMU passthrough
 	e.seq++
-	return e.track.WritePacket(e.opusPT, pkt, ts, seq, marker)
+	return e.track.WritePacket(e.audioPT, pkt, ts, seq, marker)
 }
 
 // TelephoneEventPT implements media.SIPEventLeg.
@@ -371,6 +396,21 @@ func (t *mixedPTTrack) WritePacket(pt uint8, payload []byte, ts uint32, seq uint
 }
 
 // --- small helpers ---
+
+// splitPCMU chunks a G.711 payload into 20 ms (160 byte) frames.
+func splitPCMU(payload []byte) [][]byte {
+	var out [][]byte
+	for len(payload) >= media.FrameSamples {
+		frame := make([]byte, media.FrameSamples)
+		copy(frame, payload[:media.FrameSamples])
+		out = append(out, frame)
+		payload = payload[media.FrameSamples:]
+	}
+	if len(payload) > 0 && len(out) == 0 {
+		out = append(out, payload)
+	}
+	return out
+}
 
 func equalFold(a, b string) bool {
 	if len(a) != len(b) {
