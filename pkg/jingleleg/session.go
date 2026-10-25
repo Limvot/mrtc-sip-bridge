@@ -397,13 +397,17 @@ func (c *callCore) onSessionInfo(j *Jingle) {
 	}
 }
 
-// onJMI handles one JMI action for this call's sid.
+// onJMI handles one JMI action for this call's sid. Actions from our own other resources are
+// ADVISORY (logged, never fatal): the bridge is the designated call endpoint for this account,
+// and some other device/gateway path was auto-rejecting calls within ~50ms of the propose,
+// sending callers to voicemail before the Matrix user could answer. If the call truly leaves
+// for another device, the gateway sends session-terminate/gone and we follow that instead.
 func (c *callCore) onJMI(j JMI, fromOwnBare bool) {
 	switch j.Action {
 	case JMIProceed, JMIAccept:
 		if fromOwnBare {
-			// Another of our resources took the call: tear this one down.
-			c.end(leg.EndCancelled, 487, "answered on another device", nil)
+			c.log.Info().Str("action", j.Action).Str("sid", j.ID).
+				Msg("jingleleg: ignoring own-device JMI (bridge is the call endpoint)")
 			return
 		}
 		if !c.outbound {
@@ -422,7 +426,8 @@ func (c *callCore) onJMI(j JMI, fromOwnBare bool) {
 		c.emit(leg.CallEvent{Kind: leg.EventProvisional, At: time.Now(), StatusCode: 183})
 	case JMIReject:
 		if fromOwnBare {
-			c.end(leg.EndRejected, 603, "declined on another device", nil)
+			c.log.Info().Str("action", j.Action).Str("sid", j.ID).
+				Msg("jingleleg: ignoring own-device JMI reject (bridge is the call endpoint)")
 			return
 		}
 		if c.outbound {
@@ -435,9 +440,12 @@ func (c *callCore) onJMI(j JMI, fromOwnBare bool) {
 	case JMIRetract:
 		if !fromOwnBare {
 			c.end(leg.EndCancelled, 487, "caller cancelled", nil)
+		} else {
+			c.log.Info().Str("sid", j.ID).Msg("jingleleg: ignoring own-device JMI retract")
 		}
 	case JMIFinish:
 		if fromOwnBare {
+			c.log.Info().Str("sid", j.ID).Msg("jingleleg: ignoring own-device JMI finish")
 			return
 		}
 		c.mu.Lock()

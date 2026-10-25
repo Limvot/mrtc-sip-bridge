@@ -339,18 +339,26 @@ func TestInboundCallerCancels(t *testing.T) {
 	}
 }
 
-func TestInboundAnsweredElsewhere(t *testing.T) {
+// TestInboundOwnDeviceJMIIsAdvisory pins the bridge-is-the-endpoint policy: JMI actions from
+// the account's own other resources are logged and ignored, never fatal (a device/gateway path
+// was auto-rejecting calls ~50ms after the propose, sending callers to voicemail).
+func TestInboundOwnDeviceJMIIsAdvisory(t *testing.T) {
 	h := newHarness(t, true)
-	propose, _ := JMI{Action: JMIPropose, ID: "sid1", Descriptions: []Description{{Media: "audio"}}}.Marshal()
+	propose := mustJMI(JMI{Action: JMIPropose, ID: "sid1", Descriptions: []Description{{Media: "audio"}}})
 	h.ua.HandleMessage(context.Background(), "+15550001111@cheogram.com", "chat", "m1", propose)
 	call := h.waitInvite(t)
-	// A carbon of our own other resource proceeding with the same sid.
-	proceed, _ := JMI{Action: JMIProceed, ID: "sid1"}.Marshal()
-	h.ua.HandleMessage(context.Background(), "me@example.com/phone", "chat", "m2", proceed)
-	end := waitEvent(t, call.Events(), leg.EventEnded)
-	if end.Cause != leg.EndCancelled || end.Reason != "answered on another device" {
-		t.Fatalf("end mismatch: %+v", end)
+	for _, j := range []JMI{
+		{Action: JMIReject, ID: "sid1"},
+		{Action: JMIProceed, ID: "sid1"},
+		{Action: JMIRetract, ID: "sid1"},
+	} {
+		h.ua.HandleJMI(context.Background(), "me@example.com/phone", true, j)
 	}
+	// The call must still be alive and answerable.
+	call.Answer()
+	h.waitSent(t, "session-initiate")
+	h.ua.HandleIQ(context.Background(), "+15550001111@cheogram.com", "set", "iq1", remoteAnswer("sid1"))
+	waitEvent(t, call.Events(), leg.EventAnswered)
 }
 
 func TestInboundPeerHangupAfterAnswer(t *testing.T) {
