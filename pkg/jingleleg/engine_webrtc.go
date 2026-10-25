@@ -62,6 +62,7 @@ type webRTCEngine struct {
 	remoteSet bool
 	pending   []Candidate
 	txLogged  int
+	rxLogged  int
 
 	recv      chan *media.RTPPacket
 	closed    chan struct{}
@@ -140,8 +141,16 @@ func (e *webRTCEngine) readLoop(tr *webrtc.TrackRemote) {
 			e.Close()
 			return
 		}
-		if pkt.PayloadType == e.tePT {
-			continue // inbound DTMF events are dropped (outbound DTMF is RFC 4733; see docs)
+		if e.rxLogged < 5 {
+			e.rxLogged++
+			e.cfg.Log.Debug().Uint8("pt", pkt.PayloadType).Uint16("seq", pkt.SequenceNumber).
+				Uint32("ts", pkt.Timestamp).Int("len", len(pkt.Payload)).Msg("jingleleg: incoming RTP")
+		}
+		// DTMF: RFC 4733 telephone-events are 4-byte payloads on the telephone-event PT. Only
+		// those are dropped — some gateways put AUDIO on the telephone-event PT (or ours), and
+		// filtering by PT alone threw perfectly good audio away.
+		if pkt.PayloadType == e.tePT && len(pkt.Payload) <= 4 {
+			continue
 		}
 		var frames [][]byte
 		if e.pcmuLeg {
@@ -393,15 +402,20 @@ func (e *webRTCEngine) statsLoop() {
 			return
 		case <-t.C:
 			var rxPackets, txPackets uint32
+			var wireRx, wireTx uint32
 			for _, st := range e.pc.GetStats() {
 				switch s := st.(type) {
 				case webrtc.InboundRTPStreamStats:
 					rxPackets += s.PacketsReceived
 				case webrtc.OutboundRTPStreamStats:
 					txPackets += s.PacketsSent
+				case webrtc.TransportStats:
+					wireRx += s.PacketsReceived
+					wireTx += s.PacketsSent
 				}
 			}
 			e.cfg.Log.Info().Uint32("rtp_rx", rxPackets).Uint32("rtp_tx", txPackets).
+				Uint32("wire_rx", wireRx).Uint32("wire_tx", wireTx).
 				Str("codec", e.NegotiatedCodec()).Msg("jingleleg: media stats")
 		}
 	}
