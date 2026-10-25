@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -109,7 +110,15 @@ func newWebRTCEngine(cfg WebRTCEngineConfig) (*webRTCEngine, error) {
 		return nil, err
 	}
 	pc.OnTrack(func(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+		cfg.Log.Info().Str("codec", tr.Codec().MimeType).Uint32("ssrc", uint32(tr.SSRC())).
+			Msg("jingleleg: remote track received")
 		e.readLoop(tr)
+	})
+	pc.OnICEConnectionStateChange(func(st webrtc.ICEConnectionState) {
+		cfg.Log.Info().Str("ice_state", st.String()).Msg("jingleleg: ICE connection state")
+	})
+	pc.OnConnectionStateChange(func(st webrtc.PeerConnectionState) {
+		cfg.Log.Info().Str("pc_state", st.String()).Msg("jingleleg: peer connection state")
 	})
 	return e, nil
 }
@@ -298,7 +307,11 @@ func (e *webRTCEngine) WriteRTP(payload []byte, samples uint32, marker bool) err
 	}
 	ts := e.ts
 	seq := e.seq
-	e.ts += samples * 6 // 8 kHz media clock towards the 48 kHz RTP clock (Opus) / PCMU passthrough
+	inc := samples
+	if !e.pcmuLeg {
+		inc = samples * 6 // Opus RTP clock is 48 kHz; PCMU's is 8 kHz (RFC 3551)
+	}
+	e.ts += inc
 	e.seq++
 	return e.track.WritePacket(e.audioPT, pkt, ts, seq, marker)
 }
@@ -313,9 +326,43 @@ func (e *webRTCEngine) WriteEvent(payload []byte, samples uint32, marker bool) e
 	}
 	ts := e.ts
 	seq := e.seq
-	e.ts += samples * 6
+	inc := samples
+	if !e.pcmuLeg {
+		inc = samples * 6
+	}
+	e.ts += inc
 	e.seq++
 	return e.track.WritePacket(e.tePT, payload, ts, seq, marker)
+}
+
+// AddRemoteTransport applies trickled ICE candidates from a <transport-info/>.
+func (e *webRTCEngine) AddRemoteTransport(tr *JingleTransport) error {
+	if tr == nil {
+		return nil
+	}
+	for _, c := range tr.Candidates {
+		typ := webrtc.ICECandidateTypeHost
+		switch c.Type {
+		case "srflx":
+			typ = webrtc.ICECandidateTypeSrflx
+		case "relay":
+			typ = webrtc.ICECandidateTypeRelay
+		case "prflx":
+			typ = webrtc.ICECandidateTypePrflx
+		}
+		ic := webrtc.ICECandidateInit{
+			Candidate: fmt.Sprintf("candidate:%s %d %s %d %s %d typ %s",
+				orDefault(c.Foundation, "1"), c.Component, strings.ToUpper(orDefault(c.Protocol, "udp")),
+				c.Priority, c.IP, c.Port, c.Type),
+			SDPMid:        ptrStr("0"),
+			SDPMLineIndex: ptrUint16(0),
+		}
+		_ = typ
+		if err := e.pc.AddICECandidate(ic); err != nil {
+			e.cfg.Log.Warn().Err(err).Str("candidate", ic.Candidate).Msg("jingleleg: AddICECandidate failed")
+		}
+	}
+	return nil
 }
 
 // SelectedPair implements Engine (approximation from the gathered candidates; logs only).
@@ -396,6 +443,9 @@ func (t *mixedPTTrack) WritePacket(pt uint8, payload []byte, ts uint32, seq uint
 }
 
 // --- small helpers ---
+
+func ptrStr(s string) *string    { return &s }
+func ptrUint16(v uint16) *uint16 { return &v }
 
 // splitPCMU chunks a G.711 payload into 20 ms (160 byte) frames.
 func splitPCMU(payload []byte) [][]byte {

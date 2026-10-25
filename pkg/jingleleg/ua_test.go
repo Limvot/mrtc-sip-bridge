@@ -97,6 +97,8 @@ func (e *fakeEngine) SetRemoteAnswer(remote *Jingle) error {
 	return nil
 }
 
+func (e *fakeEngine) AddRemoteTransport(tr *JingleTransport) error { return nil }
+
 func (e *fakeEngine) SelectedPair() (string, string) { return "10.0.0.1:10000", "203.0.113.1:45678" }
 
 func (e *fakeEngine) Close() error {

@@ -32,6 +32,8 @@ type Engine interface {
 	Offer() (desc *Description, transport *JingleTransport, err error)
 	// SetRemoteAnswer processes the remote session-accept (initiator role).
 	SetRemoteAnswer(remote *Jingle) error
+	// AddRemoteTransport applies trickled ICE candidates from <transport-info/>.
+	AddRemoteTransport(tr *JingleTransport) error
 	// SelectedPair returns the chosen ICE pair as "ip:port"/"ip:port" (logs only; "" if unknown).
 	SelectedPair() (local, remote string)
 	// Close tears the engine down; ReadRTP returns io.EOF afterwards. Idempotent.

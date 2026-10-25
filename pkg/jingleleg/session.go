@@ -373,6 +373,23 @@ func (c *callCore) onTerminate(j *Jingle) {
 	c.end(cause, terminateStatus(cond, answered), text, nil)
 }
 
+// onTransportInfo handles <jingle action='transport-info'>: trickled ICE candidates.
+func (c *callCore) onTransportInfo(j *Jingle) {
+	tr := j.AudioTransport()
+	if tr == nil {
+		return
+	}
+	c.mu.Lock()
+	eng := c.engine
+	c.mu.Unlock()
+	if eng == nil {
+		return
+	}
+	if err := eng.AddRemoteTransport(tr); err != nil {
+		c.log.Warn().Err(err).Msg("jingleleg: failed to apply trickled transport")
+	}
+}
+
 // onSessionInfo handles <jingle action='session-info'> (ringing, hold, ...).
 func (c *callCore) onSessionInfo(j *Jingle) {
 	if j.InfoName == "ringing" && c.outbound {

@@ -343,31 +343,54 @@ func (u *UA) HandleIQ(ctx context.Context, from, iqType, id string, payload []by
 		if core == nil {
 			// Direct session-initiate with no JMI propose: create the inbound call.
 			u.onDirectInitiate(j, from)
+			u.sendIQResult(ctx, from, id)
 			return true
 		}
 		core.onSessionInitiate(j, from)
+		u.sendIQResult(ctx, from, id)
 		return true
 	case ActionSessionAccept:
 		if core == nil {
+			u.sendIQResult(ctx, from, id)
 			return true
 		}
 		core.onSessionAccept(j)
+		u.sendIQResult(ctx, from, id)
 		return true
 	case ActionSessionTerminate:
 		if core == nil {
+			u.sendIQResult(ctx, from, id)
 			return true
 		}
 		core.onTerminate(j)
 		u.dropSession(j.SID)
+		u.sendIQResult(ctx, from, id)
 		return true
 	case ActionSessionInfo:
 		if core == nil {
+			u.sendIQResult(ctx, from, id)
 			return true
 		}
 		core.onSessionInfo(j)
+		u.sendIQResult(ctx, from, id)
+		return true
+	case "transport-info":
+		if core != nil {
+			core.onTransportInfo(j)
+		}
+		u.sendIQResult(ctx, from, id)
 		return true
 	}
 	return false
+}
+
+// sendIQResult acknowledges a handled IQ set (XEP-0166 runs over IQs; unanswered sets make
+// peers retry or stall their session).
+func (u *UA) sendIQResult(ctx context.Context, to, id string) {
+	if to == "" || id == "" {
+		return
+	}
+	_ = u.transport.SendIQ(ctx, to, "result", id, nil)
 }
 
 // onDirectInitiate creates the inbound call for a session-initiate with no JMI propose.
